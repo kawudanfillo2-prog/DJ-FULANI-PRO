@@ -5,16 +5,23 @@ include(FetchContent)
 set(SOUNDSTRETCH OFF CACHE BOOL "" FORCE)
 set(SOUNDTOUCH_DLL OFF CACHE BOOL "" FORCE)
 set(OPENMP OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
     soundtouch
-    URL https://www.surina.net/soundtouch/soundtouch-2.4.1.tar.gz
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    GIT_REPOSITORY https://github.com/rtiangha/soundtouch.git
+    GIT_TAG master
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
 )
 FetchContent_MakeAvailable(soundtouch)
 
 add_library(djfulani_audio SHARED native_audio_engine.cpp)
 find_package(oboe REQUIRED CONFIG)
 
+target_include_directories(djfulani_audio PRIVATE
+    "${soundtouch_SOURCE_DIR}/include"
+)
 target_compile_features(djfulani_audio PRIVATE cxx_std_20)
 target_compile_options(djfulani_audio PRIVATE -O3 -Wall -Wextra)
 target_link_libraries(djfulani_audio
