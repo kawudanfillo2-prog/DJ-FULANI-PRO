@@ -1,38 +1,43 @@
 # DJ FULANI PRO
 
-A professional four-deck DJ mixing application for Android.
+Professional four-deck Android DJ workstation — active development.
 
-## Current milestone
-**Milestone 2 — Four-deck audio playback and basic mixing controls.**
+## Milestone 3 — Four-deck media and performance controls
 
-The Android app now has four independent music decks. Each deck can select an audio file through Android's document picker, prepare it, play, pause, stop, and seek. Each deck has its own volume control. The master level and crossfader adjust the four deck outputs.
+This milestone replaces the first MediaPlayer-based four-deck screen with AndroidX Media3 ExoPlayer.
 
-## Implemented in this milestone
-- Four independent audio players (Deck A–D)
-- Android audio-file picker using the Storage Access Framework
-- Asynchronous track loading
-- Play, pause, stop and seek controls
-- Per-deck volume
-- Master volume
-- Crossfader (Deck A/C on left, Deck B/D on right)
-- Landscape four-deck console layout
+### Implemented in this milestone
+- Four independent Media3 players (Deck A–D)
+- Load local audio or video from the Android document picker
+- Video preview surface on each deck when a video file is loaded
+- Play, pause, stop, seek and per-deck volume
+- Master gain and equal-power crossfader
+- Manual BPM entry
+- Selectable tempo master
+- BPM ratio sync with approximate beat-phase alignment using user-set beat markers
+- Set beat-zero marker, cue return and four hot-cue positions per deck
+- Four-beat loop based on the entered BPM
+- Pitch/tempo adjustment
+- Per-deck Android Equalizer controls (LOW / MID / HIGH), where supported by the device
+- Per-deck Preset Reverb and Bass Boost toggles, where supported by the device
+- Eight performance sampler pads with audio sample loading
 
-## Not implemented yet
-- Accurate BPM detection and beat grids
-- Beatmatching / time-stretch sync
-- Jog wheels and scratching
-- Waveforms and hot cues
-- EQ, filters, FX and sampler
-- Headphone cue routing
-- Recording and professional low-latency native mixing
+## Known limitations — not yet a complete professional DJ engine
+- BPM is entered manually; automatic BPM and downbeat analysis are not implemented yet.
+- Beat sync is BPM-ratio and beat-phase alignment from user-set beat markers. It is not sample-accurate sync.
+- The four players use Android Media3 outputs. A single shared native audio mixer is still needed for sample-accurate mixing, advanced time-stretching, scratch response and a unified recording bus.
+- Live waveform rendering and waveform analysis are not implemented yet.
+- Jog-wheel vinyl scratching, echo/delay/flanger/filter DSP, sampler slicing, recording, stem separation, headphone cue routing and playlist/library management are future milestones.
+- Four simultaneous video decoders may exceed a phone's hardware decoder limits. Audio-only decks are recommended for performance on mid-range phones.
 
 ## Technology
 - Kotlin Android application
-- Android MediaPlayer for this playback milestone
-- Planned future native low-latency engine: C++ and Google Oboe
+- AndroidX Media3 ExoPlayer 1.11.1 for local audio/video media playback
+- Android audio effects API for basic EQ, preset reverb and bass boost where supported
+- Planned next core engine: C++ with Google Oboe for shared low-latency mixing and DSP
 
 ## Build
-Open this repository in Android Studio with JDK 17 and Android SDK 35 installed. Sync Gradle and build the app module. Test on a physical Android device.
+Open this repository in Android Studio with JDK 17 and Android SDK 35, sync Gradle, and build the `app` module. GitHub Actions also builds a debug APK on each push to `main`.
 
-## Important
-This is an in-progress project. The current milestone provides real multi-deck playback, but it is not yet a feature-complete VirtualDJ replacement. Device audio routing and simultaneous playback behavior must be tested on the target phone.
+## APK note
+APK size is not a quality target. The app should include only codecs, effects and assets it actually uses; adding unused files merely to make the APK 300 MB would make installation and updates slower without improving sound or mixing quality.
