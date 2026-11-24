@@ -56,6 +56,13 @@ class MainActivity : Activity() {
         val waveform: WaveformView,
         val turntable: TurntableView,
         var mediaUri: Uri? = null,
+        var audioMode: Boolean = false,
+        var decoder: PcmDeckDecoder? = null,
+        var audioPlaying: Boolean = false,
+        var durationMs: Long = 0L,
+        var eqLow: Float = 1f,
+        var eqMid: Float = 1f,
+        var eqHigh: Float = 1f,
         var analysisToken: Int = 0,
         var loaded: Boolean = false,
         var dragging: Boolean = false,
@@ -95,23 +102,20 @@ class MainActivity : Activity() {
         override fun run() {
             decks.forEachIndexed { index, deck ->
                 if (!deck.loaded) return@forEachIndexed
-                val player = deck.player
-                if (!deck.dragging && player.duration > 0) {
-                    deck.seek.max = player.duration.toInt().coerceAtLeast(1)
-                    deck.seek.progress = player.currentPosition.toInt()
-                        .coerceIn(0, deck.seek.max)
+                val position = currentPositionMs(index)
+                val duration = if (deck.audioMode) deck.durationMs else deck.player.duration
+                val playing = if (deck.audioMode) deck.audioPlaying else deck.player.isPlaying
+                if (!deck.dragging && duration > 0L) {
+                    deck.seek.max = duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
+                    deck.seek.progress = position.coerceIn(0L, deck.seek.max.toLong()).toInt()
                 }
-                if (player.duration > 0L) {
-                    deck.waveform.setPlaybackPosition(player.currentPosition.toFloat() / player.duration)
+                if (duration > 0L) deck.waveform.setPlaybackPosition(position.toFloat() / duration)
+                deck.turntable.setPlaying(playing)
+                if (deck.loopEnabled && playing && position >= deck.loopEndMs) {
+                    if (deck.audioMode) seekAudioDeck(index, deck.loopStartMs, true)
+                    else deck.player.seekTo(deck.loopStartMs)
                 }
-                deck.turntable.setPlaying(player.isPlaying)
-                if (deck.loopEnabled && player.isPlaying &&
-                    player.currentPosition >= deck.loopEndMs) {
-                    player.seekTo(deck.loopStartMs)
-                }
-                if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-                    deck.playButton.text = "PAUSE"
-                }
+                if (playing) deck.playButton.text = "PAUSE"
             }
             mainHandler.postDelayed(this, 100)
         }
@@ -121,6 +125,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(6, 10, 17)
         window.navigationBarColor = Color.rgb(6, 10, 17)
+        val audioReady = try { NativeAudioBridge.nativeStartEngine() } catch (_: Exception) { false }
+        if (!audioReady) Toast.makeText(this, "Native audio engine could not start on this device.", Toast.LENGTH_LONG).show()
         buildConsole()
         mainHandler.post(progressTask)
     }
@@ -392,7 +398,10 @@ class MainActivity : Activity() {
             override fun onStartTrackingTouch(bar: SeekBar?) { deck.dragging = true }
             override fun onStopTrackingTouch(bar: SeekBar?) {
                 deck.dragging = false
-                if (deck.loaded) player.seekTo(deck.seek.progress.toLong())
+                if (deck.loaded) {
+                    if (deck.audioMode) seekAudioDeck(index, deck.seek.progress.toLong(), deck.audioPlaying)
+                    else player.seekTo(deck.seek.progress.toLong())
+                }
             }
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) { }
         })
@@ -410,8 +419,8 @@ class MainActivity : Activity() {
                 when (playbackState) {
                     Player.STATE_BUFFERING -> deck.status.text = "BUFFERING…"
                     Player.STATE_READY -> {
-                        deck.loaded = player.currentMediaItem != null
-                        if (deck.loaded) {
+                        if (!deck.audioMode) deck.loaded = player.currentMediaItem != null
+                        if (!deck.audioMode && deck.loaded) {
                             deck.playButton.text = if (player.isPlaying) "PAUSE" else "PLAY"
                             deck.status.text = "READY • ${formatTime(player.duration)} • " +
                                 if (deck.bpm > 0f) "BPM ${deck.bpm}" else "BPM --"
@@ -480,7 +489,20 @@ class MainActivity : Activity() {
     }
 
     private fun setEqBand(deckIndex: Int, frequencyHz: Float, progress: Int) {
-        val eq = decks.getOrNull(deckIndex)?.equalizer ?: return
+        val deck = decks.getOrNull(deckIndex) ?: return
+        if (deck.audioMode) {
+            val db = ((progress - 100) / 100f) * 12f
+            val gain = Math.pow(10.0, (db / 20f).toDouble()).toFloat()
+            when {
+                frequencyHz < 200f -> deck.eqLow = gain
+                frequencyHz < 3000f -> deck.eqMid = gain
+                else -> deck.eqHigh = gain
+            }
+            val low = if (deck.bassEnabled) maxOf(deck.eqLow, 1.5f) else deck.eqLow
+            NativeAudioBridge.nativeSetDeckEq(deckIndex, low, deck.eqMid, deck.eqHigh)
+            return
+        }
+        val eq = deck.equalizer ?: return
         try {
             var nearest = 0
             var nearestDistance = Float.MAX_VALUE
@@ -501,6 +523,12 @@ class MainActivity : Activity() {
 
     private fun toggleReverb(index: Int) {
         val deck = decks[index]
+        if (deck.audioMode) {
+            deck.reverbEnabled = !deck.reverbEnabled
+            NativeAudioBridge.nativeSetDeckEcho(index, deck.reverbEnabled)
+            toast(if (deck.reverbEnabled) "ECHO ON • Deck ${'A' + index}" else "ECHO OFF")
+            return
+        }
         val reverb = deck.reverb
         if (reverb == null) {
             toast("Reverb effect is not supported by this device.")
@@ -519,6 +547,13 @@ class MainActivity : Activity() {
 
     private fun toggleBassBoost(index: Int) {
         val deck = decks[index]
+        if (deck.audioMode) {
+            deck.bassEnabled = !deck.bassEnabled
+            val low = if (deck.bassEnabled) maxOf(deck.eqLow, 1.5f) else deck.eqLow
+            NativeAudioBridge.nativeSetDeckEq(index, low, deck.eqMid, deck.eqHigh)
+            toast(if (deck.bassEnabled) "BASS BOOST ON" else "BASS BOOST OFF")
+            return
+        }
         val bass = deck.bassBoost
         if (bass == null) {
             toast("Bass Boost is not supported by this device.")
@@ -662,11 +697,17 @@ class MainActivity : Activity() {
 
     private fun loadTrack(index: Int, uri: Uri) {
         val deck = decks[index]
+        deck.decoder?.stop()
+        deck.decoder = null
+        deck.audioPlaying = false
+        NativeAudioBridge.nativeSetDeckPlaying(index, false)
+        NativeAudioBridge.nativeClearDeck(index)
         deck.analysisToken++
         deck.mediaUri = uri
         deck.player.stop()
         deck.player.clearMediaItems()
         deck.loaded = false
+        deck.durationMs = 0L
         deck.loopEnabled = false
         deck.syncEnabled = false
         deck.bpm = 0f
@@ -678,13 +719,88 @@ class MainActivity : Activity() {
         deck.playButton.text = "LOADING"
 
         val mime = contentResolver.getType(uri).orEmpty()
-        deck.videoView.visibility =
-            if (mime.startsWith("video/")) View.VISIBLE else View.GONE
+        deck.audioMode = mime.startsWith("audio/")
+        deck.videoView.visibility = if (mime.startsWith("video/")) View.VISIBLE else View.GONE
 
-        deck.player.setMediaItem(MediaItem.fromUri(uri))
-        deck.player.prepare()
-        deck.player.playWhenReady = false
+        if (deck.audioMode) {
+            deck.status.text = "DECODING INTO SHARED MIXER…"
+            val decoder = PcmDeckDecoder(
+                applicationContext, index, uri, 0L,
+                onReady = { duration, _ ->
+                    runOnUiThread {
+                        deck.durationMs = duration
+                        deck.loaded = true
+                        deck.playButton.text = "PLAY"
+                        deck.status.text = "PCM DECK READY • SHARED CLOCK"
+                        if (duration > 0L) deck.seek.max =
+                            duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                        applyDeckVolumes()
+                    }
+                },
+                onFinished = {
+                    runOnUiThread { deck.status.text = "TRACK DECODED • BUFFER DRAINING" }
+                },
+                onError = { message ->
+                    runOnUiThread {
+                        deck.loaded = false
+                        deck.playButton.text = "LOAD"
+                        deck.status.text = "AUDIO DECODE ERROR"
+                        toast(message)
+                    }
+                }
+            )
+            deck.decoder = decoder
+            decoder.start()
+        } else {
+            deck.audioMode = false
+            deck.player.setMediaItem(MediaItem.fromUri(uri))
+            deck.player.prepare()
+            deck.player.playWhenReady = false
+        }
         analyzeBpm(index)
+    }
+
+    private fun currentPositionMs(index: Int): Long {
+        val deck = decks[index]
+        return if (deck.audioMode) NativeAudioBridge.nativeGetDeckPositionMs(index)
+        else deck.player.currentPosition
+    }
+
+    private fun seekAudioDeck(index: Int, targetMs: Long, resume: Boolean) {
+        val deck = decks[index]
+        val uri = deck.mediaUri ?: return
+        deck.decoder?.stop()
+        deck.decoder = null
+        deck.audioPlaying = false
+        NativeAudioBridge.nativeSetDeckPlaying(index, false)
+        NativeAudioBridge.nativeClearDeck(index)
+        deck.loaded = false
+        deck.status.text = "SEEKING / REBUFFERING…"
+        deck.playButton.text = "BUFFERING"
+        val next = PcmDeckDecoder(
+            applicationContext, index, uri, targetMs.coerceAtLeast(0L),
+            onReady = { duration, _ ->
+                runOnUiThread {
+                    deck.durationMs = duration
+                    deck.loaded = true
+                    deck.audioPlaying = resume
+                    NativeAudioBridge.nativeSetDeckPlaying(index, resume)
+                    deck.playButton.text = if (resume) "PAUSE" else "PLAY"
+                    deck.status.text = if (resume) "PLAYING • SHARED CLOCK" else "CUE / SEEK READY"
+                }
+            },
+            onFinished = { },
+            onError = { message ->
+                runOnUiThread {
+                    deck.loaded = false
+                    deck.audioPlaying = false
+                    deck.status.text = "AUDIO SEEK ERROR"
+                    toast(message)
+                }
+            }
+        )
+        deck.decoder = next
+        next.start()
     }
 
     private fun analyzeBpm(index: Int) {
@@ -718,8 +834,19 @@ class MainActivity : Activity() {
 
     private fun toggleDeck(index: Int) {
         val deck = decks[index]
-        if (!deck.loaded || deck.player.playbackState != Player.STATE_READY) {
+        if (!deck.loaded) {
             toast("Load an audio or video file into this deck first.")
+            return
+        }
+        if (deck.audioMode) {
+            deck.audioPlaying = !deck.audioPlaying
+            NativeAudioBridge.nativeSetDeckPlaying(index, deck.audioPlaying)
+            deck.status.text = if (deck.audioPlaying) "PLAYING • SHARED MIXER" else "PAUSED"
+            deck.playButton.text = if (deck.audioPlaying) "PAUSE" else "PLAY"
+            return
+        }
+        if (deck.player.playbackState != Player.STATE_READY) {
+            toast("Video is still preparing.")
             return
         }
         if (deck.player.isPlaying) {
@@ -736,10 +863,14 @@ class MainActivity : Activity() {
     private fun stopDeck(index: Int) {
         val deck = decks[index]
         if (!deck.loaded) return
-        deck.player.pause()
-        deck.player.seekTo(0L)
-        deck.playButton.text = "PLAY"
-        deck.status.text = "STOPPED"
+        if (deck.audioMode) {
+            seekAudioDeck(index, 0L, false)
+        } else {
+            deck.player.pause()
+            deck.player.seekTo(0L)
+            deck.playButton.text = "PLAY"
+            deck.status.text = "STOPPED"
+        }
     }
 
     private fun setCue(index: Int) {
@@ -748,7 +879,7 @@ class MainActivity : Activity() {
             toast("Load a track before setting a cue point.")
             return
         }
-        deck.cueMs = deck.player.currentPosition
+        deck.cueMs = currentPositionMs(index)
         deck.status.text = "CUE MARKED"
         toast("Cue point saved on Deck ${'A' + index}.")
     }
@@ -759,17 +890,21 @@ class MainActivity : Activity() {
             toast("Load a track before marking its first beat.")
             return
         }
-        deck.beatZeroMs = deck.player.currentPosition
+        deck.beatZeroMs = currentPositionMs(index)
         toast("Beat marker set on Deck ${'A' + index}.")
     }
 
     private fun returnToCue(index: Int) {
         val deck = decks[index]
         if (!deck.loaded) return
-        deck.player.pause()
-        deck.player.seekTo(deck.cueMs)
-        deck.playButton.text = "PLAY"
-        deck.status.text = "CUE POSITION"
+        if (deck.audioMode) {
+            seekAudioDeck(index, deck.cueMs, false)
+        } else {
+            deck.player.pause()
+            deck.player.seekTo(deck.cueMs)
+            deck.playButton.text = "PLAY"
+            deck.status.text = "CUE POSITION"
+        }
     }
 
     private fun useHotCue(index: Int, cueIndex: Int) {
@@ -779,10 +914,11 @@ class MainActivity : Activity() {
             return
         }
         if (deck.hotCues[cueIndex] < 0L) {
-            deck.hotCues[cueIndex] = deck.player.currentPosition
+            deck.hotCues[cueIndex] = currentPositionMs(index)
             toast("Hot Cue ${cueIndex + 1} saved.")
         } else {
-            deck.player.seekTo(deck.hotCues[cueIndex])
+            if (deck.audioMode) seekAudioDeck(index, deck.hotCues[cueIndex], deck.audioPlaying)
+            else deck.player.seekTo(deck.hotCues[cueIndex])
             toast("Jumped to Hot Cue ${cueIndex + 1}.")
         }
     }
@@ -865,39 +1001,32 @@ class MainActivity : Activity() {
         }
         val master = decks[masterIndex]
         if (!master.loaded || !target.loaded || master.bpm <= 0f || target.bpm <= 0f) {
-            toast("Load both tracks and enter BPM for both decks first.")
+            toast("Load both tracks and detect BPM on both decks first.")
             return
         }
-
         val masterEffectiveBpm = master.bpm * (1f + master.pitchPercent / 100f)
-        // In SYNC mode the target deck's pitch fader is overridden by the tempo
-        // ratio. Multiplying by its pitch again would apply the correction twice.
         val targetSpeed = masterEffectiveBpm / target.bpm
         if (targetSpeed !in 0.5f..2.0f) {
             toast("The BPM difference is too large for safe sync. Adjust pitch or BPM.")
             return
         }
-
         target.syncEnabled = true
-        target.player.setPlaybackParameters(PlaybackParameters(targetSpeed, 1f))
+        if (target.audioMode) NativeAudioBridge.nativeSetDeckSpeed(index, targetSpeed)
+        else target.player.setPlaybackParameters(PlaybackParameters(targetSpeed, 1f))
 
-        // Keep the target's current musical section. Align its beat phase to the
-        // master instead of always jumping back to the target's first beat.
+        val masterPosition = currentPositionMs(masterIndex)
+        val targetPosition = currentPositionMs(index)
         val masterBeatMs = 60_000.0 / masterEffectiveBpm.toDouble()
-        val masterBeatPosition =
-            (master.player.currentPosition - master.beatZeroMs).toDouble()
-        val masterBeatPhase = masterBeatPosition / masterBeatMs
-        val phaseWithinBeat = masterBeatPhase - floor(masterBeatPhase)
-
+        val phase = (masterPosition - master.beatZeroMs).toDouble() / masterBeatMs
+        val phaseWithinBeat = phase - floor(phase)
         val targetBeatMs = 60_000.0 / target.bpm.toDouble()
-        val targetBeatPosition =
-            (target.player.currentPosition - target.beatZeroMs).toDouble()
-        val targetBeatNumber = floor(targetBeatPosition / targetBeatMs)
-        val alignedPosition = target.beatZeroMs +
+        val targetBeatNumber = floor((targetPosition - target.beatZeroMs).toDouble() / targetBeatMs)
+        val aligned = target.beatZeroMs +
             (targetBeatNumber * targetBeatMs + phaseWithinBeat * targetBeatMs).toLong()
-        target.player.seekTo(alignedPosition.coerceAtLeast(0L))
-        target.status.text = "SYNC LOCKED • %.1f BPM".format(masterEffectiveBpm)
-        toast("Deck ${'A' + index} tempo and beat phase synced to Deck ${'A' + masterIndex}.")
+        if (target.audioMode) seekAudioDeck(index, aligned.coerceAtLeast(0L), target.audioPlaying)
+        else target.player.seekTo(aligned.coerceAtLeast(0L))
+        target.status.text = "SYNC LOCKED • ${masterEffectiveBpm} BPM"
+        toast("Deck ${'A' + index} synced to Deck ${'A' + masterIndex} on the shared output engine.")
     }
 
     private fun applyDeckSpeed(index: Int) {
@@ -907,16 +1036,14 @@ class MainActivity : Activity() {
         val masterBpm = if (master != null && master.bpm > 0f)
             master.bpm * (1f + master.pitchPercent / 100f) else 0f
         val pitchRatio = 1f + deck.pitchPercent / 100f
-        // A synced deck follows the master BPM exactly; manual pitch remains
-        // active only when SYNC is off (or on the tempo-master deck).
         val finalSpeed = if (deck.syncEnabled && !deck.isMaster &&
             deck.bpm > 0f && masterBpm > 0f) {
             (masterBpm / deck.bpm).coerceIn(0.5f, 2.0f)
-        } else {
-            pitchRatio.coerceIn(0.5f, 2.0f)
-        }
-        try { deck.player.setPlaybackParameters(PlaybackParameters(finalSpeed, 1f)) }
-        catch (_: Exception) { }
+        } else pitchRatio.coerceIn(0.5f, 2.0f)
+        try {
+            if (deck.audioMode) NativeAudioBridge.nativeSetDeckSpeed(index, finalSpeed)
+            else deck.player.setPlaybackParameters(PlaybackParameters(finalSpeed, 1f))
+        } catch (_: Exception) { }
     }
 
     private fun applyAllDeckSpeeds() {
@@ -924,12 +1051,17 @@ class MainActivity : Activity() {
     }
 
     private fun applyDeckVolumes() {
+        NativeAudioBridge.nativeSetMasterGain(masterGain)
+        NativeAudioBridge.nativeSetCrossfader(crossfader)
         val leftGain = cos(crossfader * Math.PI / 2.0).toFloat()
         val rightGain = sin(crossfader * Math.PI / 2.0).toFloat()
         decks.forEachIndexed { index, deck ->
+            NativeAudioBridge.nativeSetDeckGain(index, deck.gain)
             val crossGain = if (index == 0 || index == 2) leftGain else rightGain
-            try { deck.player.volume = (deck.gain * masterGain * crossGain).coerceIn(0f, 1f) }
-            catch (_: Exception) { }
+            if (!deck.audioMode) {
+                try { deck.player.volume = (deck.gain * masterGain * crossGain).coerceIn(0f, 1f) }
+                catch (_: IllegalStateException) { }
+            }
         }
     }
 
@@ -994,13 +1126,16 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacks(progressTask)
-        decks.forEach { deck ->
+        decks.forEachIndexed { index, deck ->
+            try { deck.decoder?.stop() } catch (_: Exception) { }
+            NativeAudioBridge.nativeSetDeckPlaying(index, false)
             try { deck.player.release() } catch (_: Exception) { }
             try { deck.equalizer?.release() } catch (_: Exception) { }
             try { deck.reverb?.release() } catch (_: Exception) { }
             try { deck.bassBoost?.release() } catch (_: Exception) { }
         }
         samplerPads.forEach { try { it.player?.release() } catch (_: Exception) { } }
+        try { NativeAudioBridge.nativeStopEngine() } catch (_: Exception) { }
         super.onDestroy()
     }
 
