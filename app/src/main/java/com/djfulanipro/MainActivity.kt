@@ -870,8 +870,9 @@ class MainActivity : Activity() {
         }
 
         val masterEffectiveBpm = master.bpm * (1f + master.pitchPercent / 100f)
-        val targetSpeed = (masterEffectiveBpm / target.bpm) *
-            (1f + target.pitchPercent / 100f)
+        // In SYNC mode the target deck's pitch fader is overridden by the tempo
+        // ratio. Multiplying by its pitch again would apply the correction twice.
+        val targetSpeed = masterEffectiveBpm / target.bpm
         if (targetSpeed !in 0.5f..2.0f) {
             toast("The BPM difference is too large for safe sync. Adjust pitch or BPM.")
             return
@@ -880,13 +881,22 @@ class MainActivity : Activity() {
         target.syncEnabled = true
         target.player.setPlaybackParameters(PlaybackParameters(targetSpeed, 1f))
 
+        // Keep the target's current musical section. Align its beat phase to the
+        // master instead of always jumping back to the target's first beat.
         val masterBeatMs = 60_000.0 / masterEffectiveBpm.toDouble()
-        val masterBeatPosition = (master.player.currentPosition - master.beatZeroMs).toDouble()
-        val beatPhase = masterBeatPosition / masterBeatMs
-        val fraction = beatPhase - floor(beatPhase)
+        val masterBeatPosition =
+            (master.player.currentPosition - master.beatZeroMs).toDouble()
+        val masterBeatPhase = masterBeatPosition / masterBeatMs
+        val phaseWithinBeat = masterBeatPhase - floor(masterBeatPhase)
+
         val targetBeatMs = 60_000.0 / target.bpm.toDouble()
-        val alignedPosition = target.beatZeroMs + (fraction * targetBeatMs).toLong()
+        val targetBeatPosition =
+            (target.player.currentPosition - target.beatZeroMs).toDouble()
+        val targetBeatNumber = floor(targetBeatPosition / targetBeatMs)
+        val alignedPosition = target.beatZeroMs +
+            (targetBeatNumber * targetBeatMs + phaseWithinBeat * targetBeatMs).toLong()
         target.player.seekTo(alignedPosition.coerceAtLeast(0L))
+        target.status.text = "SYNC LOCKED • %.1f BPM".format(masterEffectiveBpm)
         toast("Deck ${'A' + index} tempo and beat phase synced to Deck ${'A' + masterIndex}.")
     }
 
@@ -896,10 +906,15 @@ class MainActivity : Activity() {
         val master = decks.firstOrNull { it.isMaster }
         val masterBpm = if (master != null && master.bpm > 0f)
             master.bpm * (1f + master.pitchPercent / 100f) else 0f
-        val baseSpeed = if (deck.syncEnabled && !deck.isMaster &&
-            deck.bpm > 0f && masterBpm > 0f) masterBpm / deck.bpm else 1f
-        val finalSpeed = (baseSpeed * (1f + deck.pitchPercent / 100f))
-            .coerceIn(0.5f, 2.0f)
+        val pitchRatio = 1f + deck.pitchPercent / 100f
+        // A synced deck follows the master BPM exactly; manual pitch remains
+        // active only when SYNC is off (or on the tempo-master deck).
+        val finalSpeed = if (deck.syncEnabled && !deck.isMaster &&
+            deck.bpm > 0f && masterBpm > 0f) {
+            (masterBpm / deck.bpm).coerceIn(0.5f, 2.0f)
+        } else {
+            pitchRatio.coerceIn(0.5f, 2.0f)
+        }
         try { deck.player.setPlaybackParameters(PlaybackParameters(finalSpeed, 1f)) }
         catch (_: Exception) { }
     }
