@@ -97,6 +97,7 @@ class MainActivity : Activity() {
     private var masterGain = 0.9f
     private var crossfader = 0.5f
     private var pendingDeck = -1
+    private var mixRecorder: MixRecorder? = null
 
     private val progressTask = object : Runnable {
         override fun run() {
@@ -169,7 +170,9 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(dp(44), dp(44)))
         header.addView(label("DJ FULANI PRO", 22f, Color.WHITE),
             LinearLayout.LayoutParams(0, dp(44), 1f))
-        header.addView(label("4 DECKS • AUDIO + VIDEO", 9f, Color.rgb(45, 200, 255)))
+        header.addView(button("VIDEO DJ") {
+            startActivity(Intent(this, VideoDjActivity::class.java))
+        })
         root.addView(header)
 
         val subHeader = label(
@@ -598,7 +601,30 @@ class MainActivity : Activity() {
         cross.addView(crossBar, LinearLayout.LayoutParams(0, dp(28), 1f))
         strip.addView(cross, LinearLayout.LayoutParams(0,
             LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        strip.addView(button(if (mixRecorder == null) "REC" else "STOP REC") {
+            toggleRecording()
+        }, LinearLayout.LayoutParams(dp(88), dp(42)))
         return strip
+    }
+
+    private fun toggleRecording() {
+        if (mixRecorder != null) {
+            mixRecorder?.stop()
+            mixRecorder = null
+            toast("Recording stopped. WAV mix saved.")
+            rebuildConsole()
+            return
+        }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/wav"
+            putExtra(Intent.EXTRA_TITLE, "DJ_FULANI_PRO_MIX.wav")
+        }
+        startActivityForResult(intent, REQUEST_RECORD_OUTPUT)
+    }
+
+    private fun rebuildConsole() {
+        buildConsole()
     }
 
     private fun createSamplerSection(): View {
@@ -664,6 +690,33 @@ class MainActivity : Activity() {
     @Deprecated("Uses the platform document picker for broad Android compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_RECORD_OUTPUT) {
+            if (resultCode != RESULT_OK) return
+            val recordUri = data?.data ?: return
+            val recorder = MixRecorder(
+                this, recordUri,
+                onStopped = { bytes ->
+                    runOnUiThread {
+                        mixRecorder = null
+                        toast("WAV mix saved • ${bytes / 1024} KB")
+                        rebuildConsole()
+                    }
+                },
+                onError = { message ->
+                    runOnUiThread {
+                        mixRecorder = null
+                        toast("Recording error: $message")
+                        rebuildConsole()
+                    }
+                }
+            )
+            if (recorder.start()) {
+                mixRecorder = recorder
+                toast("MASTER RECORDING STARTED")
+                rebuildConsole()
+            }
+            return
+        }
         if (resultCode != RESULT_OK) return
         val uri = data?.data ?: return
         try {
@@ -1134,6 +1187,8 @@ class MainActivity : Activity() {
             try { deck.reverb?.release() } catch (_: Exception) { }
             try { deck.bassBoost?.release() } catch (_: Exception) { }
         }
+        try { mixRecorder?.stop() } catch (_: Exception) { }
+        mixRecorder = null
         samplerPads.forEach { try { it.player?.release() } catch (_: Exception) { } }
         try { NativeAudioBridge.nativeStopEngine() } catch (_: Exception) { }
         super.onDestroy()
@@ -1142,5 +1197,6 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_DECK_MEDIA = 4102
         private const val REQUEST_SAMPLER_BASE = 4200
+        private const val REQUEST_RECORD_OUTPUT = 4300
     }
 }
