@@ -79,6 +79,7 @@ class MainActivity : Activity() {
         var loopEndMs: Long = 0L,
         var loopEnabled: Boolean = false,
         var syncEnabled: Boolean = false,
+        var syncCorrection: Float = 1f,
         var isMaster: Boolean = false,
         var equalizer: Equalizer? = null,
         var reverb: PresetReverb? = null,
@@ -139,6 +140,7 @@ class MainActivity : Activity() {
                 }
                 if (playing) deck.playButton.text = "PAUSE"
             }
+            maintainSyncLock()
             mainHandler.postDelayed(this, 100)
         }
     }
@@ -979,6 +981,7 @@ class MainActivity : Activity() {
         deck.durationMs = 0L
         deck.loopEnabled = false
         deck.syncEnabled = false
+        deck.syncCorrection = 1f
         deck.bpm = 0f
         deck.beatZeroMs = 0L
         deck.cueMs = 0L
@@ -1212,8 +1215,9 @@ class MainActivity : Activity() {
             return
         }
         val beatMs = (60_000f / deck.bpm).toLong().coerceAtLeast(1L)
-        val start = deck.player.currentPosition
-        val end = (start + beatMs * 4L).coerceAtMost(deck.player.duration)
+        val start = currentPositionMs(index)
+        val duration = if (deck.audioMode) deck.durationMs else deck.player.duration
+        val end = (start + beatMs * 4L).coerceAtMost(duration)
         if (end <= start) {
             toast("There is not enough track remaining for this loop.")
             return
@@ -1284,12 +1288,16 @@ class MainActivity : Activity() {
             return
         }
         target.syncEnabled = true
+        target.syncCorrection = 1f
         if (target.audioMode) NativeAudioBridge.nativeSetDeckSpeed(index, targetSpeed)
         else target.player.setPlaybackParameters(PlaybackParameters(targetSpeed, 1f))
 
         val masterPosition = currentPositionMs(masterIndex)
         val targetPosition = currentPositionMs(index)
-        val masterBeatMs = 60_000.0 / masterEffectiveBpm.toDouble()
+        // Beat markers use each track's original source timeline. Native positions
+        // already advance through source time at the active tempo ratio; using the
+        // master's effective BPM here would apply pitch twice and shift beat phase.
+        val masterBeatMs = 60_000.0 / master.bpm.toDouble()
         val phase = (masterPosition - master.beatZeroMs).toDouble() / masterBeatMs
         val phaseWithinBeat = phase - floor(phase)
         val targetBeatMs = 60_000.0 / target.bpm.toDouble()
@@ -1298,8 +1306,9 @@ class MainActivity : Activity() {
             (targetBeatNumber * targetBeatMs + phaseWithinBeat * targetBeatMs).toLong()
         if (target.audioMode) seekAudioDeck(index, aligned.coerceAtLeast(0L), target.audioPlaying)
         else target.player.seekTo(aligned.coerceAtLeast(0L))
-        target.status.text = "SYNC LOCKED • ${masterEffectiveBpm} BPM"
-        toast("Deck ${'A' + index} synced to Deck ${'A' + masterIndex} on the shared output engine.")
+        target.status.text = "SYNC LOCKED • PHASE TRACKING • ${masterEffectiveBpm} BPM"
+        applyDeckSpeed(index)
+        toast("Deck ${'A' + index} synced to Deck ${'A' + masterIndex}. Beat phase tracking is active.")
     }
 
     private fun applyDeckSpeed(index: Int) {
@@ -1309,14 +1318,53 @@ class MainActivity : Activity() {
         val masterBpm = if (master != null && master.bpm > 0f)
             master.bpm * (1f + master.pitchPercent / 100f) else 0f
         val pitchRatio = 1f + deck.pitchPercent / 100f
-        val finalSpeed = if (deck.syncEnabled && !deck.isMaster &&
+        val baseSpeed = if (deck.syncEnabled && !deck.isMaster &&
             deck.bpm > 0f && masterBpm > 0f) {
-            (masterBpm / deck.bpm).coerceIn(0.5f, 2.0f)
-        } else pitchRatio.coerceIn(0.5f, 2.0f)
+            masterBpm / deck.bpm
+        } else pitchRatio
+        val finalSpeed = (baseSpeed * if (deck.syncEnabled && !deck.isMaster)
+            deck.syncCorrection else 1f).coerceIn(0.5f, 2.0f)
         try {
             if (deck.audioMode) NativeAudioBridge.nativeSetDeckSpeed(index, finalSpeed)
             else deck.player.setPlaybackParameters(PlaybackParameters(finalSpeed, 1f))
         } catch (_: Exception) { }
+    }
+
+    /**
+     * Keep synced decks aligned after the initial beat-grid seek. BPM matching
+     * alone cannot prevent phase drift between independent decoder pipelines.
+     * The correction is gentle and limited to +/-2% to avoid audible pumping.
+     */
+    private fun maintainSyncLock() {
+        val masterIndex = decks.indexOfFirst { it.isMaster && it.loaded }
+        if (masterIndex !in decks.indices) return
+        val master = decks[masterIndex]
+        val masterPlaying = if (master.audioMode) master.audioPlaying else master.player.isPlaying
+        if (!masterPlaying || master.bpm <= 0f) return
+
+        val masterBeatMs = 60_000.0 / master.bpm.toDouble()
+        if (masterBeatMs <= 0.0) return
+        val masterRaw = (currentPositionMs(masterIndex) - master.beatZeroMs) / masterBeatMs
+        val masterPhase = masterRaw - floor(masterRaw)
+
+        decks.forEachIndexed { index, deck ->
+            if (index == masterIndex || !deck.syncEnabled || !deck.loaded || deck.bpm <= 0f) return@forEachIndexed
+            val targetPlaying = if (deck.audioMode) deck.audioPlaying else deck.player.isPlaying
+            if (!targetPlaying) return@forEachIndexed
+            val targetBeatMs = 60_000.0 / deck.bpm.toDouble()
+            if (targetBeatMs <= 0.0) return@forEachIndexed
+            val targetRaw = (currentPositionMs(index) - deck.beatZeroMs) / targetBeatMs
+            val targetPhase = targetRaw - floor(targetRaw)
+
+            // Positive error means the target is ahead, so it must slow down.
+            var phaseError = targetPhase - masterPhase
+            if (phaseError > 0.5) phaseError -= 1.0
+            if (phaseError < -0.5) phaseError += 1.0
+            val desired = (1.0 - phaseError * 0.08).coerceIn(0.98, 1.02).toFloat()
+            val previous = deck.syncCorrection
+            deck.syncCorrection = previous * 0.85f + desired * 0.15f
+            if (kotlin.math.abs(deck.syncCorrection - previous) >= 0.0005f) applyDeckSpeed(index)
+        }
     }
 
     private fun applyAllDeckSpeeds() {
