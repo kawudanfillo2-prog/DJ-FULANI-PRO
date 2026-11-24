@@ -26,7 +26,7 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 
 ## Known limitations — not yet a complete professional DJ engine
 - AUTO BPM estimates tempo from a decoded audio preview and estimates an initial beat anchor. It is not yet a commercial-grade phrase-aware beat-grid/downbeat detector; verify and adjust the beat marker on complex, live, half-time or syncopated tracks.
-- Beat sync is BPM-ratio and beat-phase alignment from user-set beat markers. It is not sample-accurate sync.
+- Beat sync applies the master-to-target BPM ratio without double-applying the target pitch setting, and aligns the target's current beat phase while preserving its current musical section. It still uses independent Media3 player clocks and user-set beat markers, so it is not sample-accurate sync.
 - The four players use Android Media3 outputs. A single shared native audio mixer is still needed for sample-accurate mixing, advanced time-stretching, scratch response and a unified recording bus.
 - The waveform currently shows a decoded amplitude overview, not a continuously scrolling, multicolor, beat-quantized waveform display.
 - Jog-wheel touch scratching, echo/delay/flanger/filter DSP, sampler slicing, true master-bus recording, stem separation, headphone cue routing, advanced library management and the full multi-screen djay-style layout remain future milestones.
