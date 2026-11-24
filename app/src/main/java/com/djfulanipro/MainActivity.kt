@@ -100,9 +100,9 @@ class MainActivity : Activity() {
             }
             for (column in 0..1) {
                 val index = row * 2 + column
-                rowLayout.addView(createDeck(index), LinearLayout.LayoutParams(0, 0, 1f).apply {
+                rowLayout.addView(createDeck(index), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
                     width = 0
-                    height = 0
+                    height = LinearLayout.LayoutParams.MATCH_PARENT
                     weight = 1f
                     setMargins(dp(4), dp(3), dp(4), dp(3))
                 })
