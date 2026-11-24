@@ -1,31 +1,38 @@
 # DJ FULANI PRO
 
-Professional four-deck DJ mixing application for Android.
+A professional four-deck DJ mixing application for Android.
 
 ## Current milestone
-**Milestone 1 — Android project foundation and native low-latency audio-output scaffold.**
+**Milestone 2 — Four-deck audio playback and basic mixing controls.**
 
-This is an early development project, not a finished APK. The current audio callback outputs silence safely. It does not yet decode or play music files.
+The Android app now has four independent music decks. Each deck can select an audio file through Android's document picker, prepare it, play, pause, stop, and seek. Each deck has its own volume control. The master level and crossfader adjust the four deck outputs.
 
-## Planned engine
-- Four independent decks (A–D)
-- Audio file library and decoding
-- BPM analysis, beat grids and beat sync
-- Waveforms, hot cues and loops
-- Per-deck EQ, filters, gain and channel faders
-- Crossfader, master output and limiter
-- Sampler, effects and recording
-- Headphone cueing and audio-device routing
+## Implemented in this milestone
+- Four independent audio players (Deck A–D)
+- Android audio-file picker using the Storage Access Framework
+- Asynchronous track loading
+- Play, pause, stop and seek controls
+- Per-deck volume
+- Master volume
+- Crossfader (Deck A/C on left, Deck B/D on right)
+- Landscape four-deck console layout
+
+## Not implemented yet
+- Accurate BPM detection and beat grids
+- Beatmatching / time-stretch sync
+- Jog wheels and scratching
+- Waveforms and hot cues
+- EQ, filters, FX and sampler
+- Headphone cue routing
+- Recording and professional low-latency native mixing
 
 ## Technology
 - Kotlin Android application
-- C++ audio engine using Google Oboe
-- Gradle, Android NDK and CMake
+- Android MediaPlayer for this playback milestone
+- Planned future native low-latency engine: C++ and Google Oboe
 
-## Build prerequisites
-Android Studio, JDK 17, Android SDK, Android NDK and CMake.
-
-Open this repository in Android Studio, sync Gradle, then build the app module. Test audio on a physical Android device.
+## Build
+Open this repository in Android Studio with JDK 17 and Android SDK 35 installed. Sync Gradle and build the app module. Test on a physical Android device.
 
 ## Important
-Features will be implemented incrementally and tested on real devices. The first build is only a foundation; do not consider it a complete DJ mixer.
+This is an in-progress project. The current milestone provides real multi-deck playback, but it is not yet a feature-complete VirtualDJ replacement. Device audio routing and simultaneous playback behavior must be tested on the target phone.
