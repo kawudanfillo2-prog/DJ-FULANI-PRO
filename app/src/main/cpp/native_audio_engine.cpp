@@ -22,6 +22,7 @@ struct Deck {
  std::atomic<int64_t> startMs{0},durationMs{0};
  std::atomic<float> gain{0.82f},speed{1},lowGain{1},midGain{1},highGain{1};
  std::atomic<uint32_t> clearReq{0},clearAck{0};
+ std::atomic<bool> clearing{false};
  std::mutex stretchMutex;
  std::unique_ptr<soundtouch::SoundTouch> stretch;
  double phase=0;
@@ -48,16 +49,25 @@ public:
  int push(int d,JNIEnv*e,jfloatArray a,int off,int frames){
   if(!valid(d)||!a||frames<=0)return 0;
   auto&x=decks_[d];
-  std::vector<jfloat> input((size_t)frames*2);
-  e->GetFloatArrayRegion(a,off,frames*2,input.data());
-  if(e->ExceptionCheck()){e->ExceptionClear();return 0;}
   std::lock_guard<std::mutex> guard(x.stretchMutex);
+  if(x.clearing.load(std::memory_order_acquire))return 0;
   if(!x.stretch){
    x.stretch=std::make_unique<soundtouch::SoundTouch>();
    x.stretch->setSampleRate((uint)x.rate.load());
    x.stretch->setChannels(2);
    x.stretch->setTempo(x.speed.load());
   }
+  drainStretch(x);
+  const uint64_t w=x.write.load(std::memory_order_relaxed);
+  const uint64_t r=x.read.load(std::memory_order_acquire);
+  const uint64_t freeFrames=CAP-(w-r);
+  const double tempo=x.speed.load(std::memory_order_relaxed);
+  const uint64_t required=(uint64_t)std::ceil((double)frames/std::max(0.5,tempo))+2048ULL;
+  if(freeFrames<required)return 0;
+
+  std::vector<jfloat> input((size_t)frames*2);
+  e->GetFloatArrayRegion(a,off,frames*2,input.data());
+  if(e->ExceptionCheck()){e->ExceptionClear();return 0;}
   x.stretch->putSamples(input.data(),(uint)frames);
   drainStretch(x);
   return frames;
@@ -65,6 +75,7 @@ public:
  void clear(int d){
   if(!valid(d))return;
   auto&x=decks_[d];
+  x.clearing.store(true,std::memory_order_release);
   x.playing.store(false,std::memory_order_release);
   {
    std::lock_guard<std::mutex> guard(x.stretchMutex);
@@ -77,6 +88,7 @@ public:
    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   applyClear(x,req);
+  x.clearing.store(false,std::memory_order_release);
  }
  void info(int d,int rate,int64_t duration,int64_t start){
   if(!valid(d))return;
@@ -113,7 +125,14 @@ public:
   if(!valid(d))return;
   auto&x=decks_[d];
   std::lock_guard<std::mutex> guard(x.stretchMutex);
-  if(x.stretch){x.stretch->flush();drainStretch(x);}
+  if(x.stretch){
+   x.stretch->flush();
+   while(x.stretch->numSamples()>0 && !x.clearing.load(std::memory_order_acquire)){
+    drainStretch(x);
+    if(x.stretch->numSamples()>0)
+     std::this_thread::sleep_for(std::chrono::milliseconds(2));
+   }
+  }
  }
  void eq(int d,float l,float m,float h){if(valid(d)){decks_[d].lowGain.store(std::clamp(l,0.f,2.f));decks_[d].midGain.store(std::clamp(m,0.f,2.f));decks_[d].highGain.store(std::clamp(h,0.f,2.f));}}
  void echo(int d,bool v){if(valid(d))decks_[d].echo.store(v);}
@@ -170,26 +189,23 @@ public:
  }
 private:
  static bool valid(int d){return d>=0&&d<N;}
- static void enqueue(Deck&x,const float*samples,int frames){
-  int sent=0;
-  while(sent<frames){
-   uint64_t w=x.write.load(std::memory_order_relaxed),r=x.read.load(std::memory_order_acquire);
-   int n=(int)std::min<uint64_t>(CAP-(w-r),(uint64_t)(frames-sent));
-   if(n<=0){std::this_thread::sleep_for(std::chrono::milliseconds(1));continue;}
-   for(int i=0;i<n;i++){
-    uint64_t p=((w+i)&MASK)*2;
-    x.pcm[p]=samples[(sent+i)*2];x.pcm[p+1]=samples[(sent+i)*2+1];
-   }
-   x.write.store(w+n,std::memory_order_release);sent+=n;
-  }
- }
  static void drainStretch(Deck&x){
-  if(!x.stretch)return;
+  if(!x.stretch || x.clearing.load(std::memory_order_acquire))return;
   std::array<float,4096*2> temp{};
   while(x.stretch->numSamples()>0){
-   uint got=x.stretch->receiveSamples(temp.data(),4096);
+   const uint64_t w=x.write.load(std::memory_order_relaxed);
+   const uint64_t r=x.read.load(std::memory_order_acquire);
+   const uint64_t freeFrames=CAP-(w-r);
+   if(freeFrames==0)break;
+   const uint request=(uint)std::min<uint64_t>(4096,freeFrames);
+   const uint got=x.stretch->receiveSamples(temp.data(),request);
    if(got==0)break;
-   enqueue(x,temp.data(),(int)got);
+   for(uint i=0;i<got;i++){
+    uint64_t p=((w+i)&MASK)*2;
+    x.pcm[p]=temp[i*2];
+    x.pcm[p+1]=temp[i*2+1];
+   }
+   x.write.store(w+got,std::memory_order_release);
   }
  }
  static void applyClear(Deck&x,uint32_t req){
