@@ -9,6 +9,10 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
+            android:name=".StemSeparationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
             android:name=".VideoDjActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
