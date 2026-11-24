@@ -14,6 +14,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Fetch Demucs Android source and Eigen submodule
+        run: |
+          mkdir -p third_party
+          git clone --depth 1 https://github.com/jPaauwe/demucs-android.git third_party/demucs-android
+          git -C third_party/demucs-android checkout f4bc42b6c209beea2aa4a04d37c75cd06b0c90d2
+          git -C third_party/demucs-android submodule update --init --recursive --depth 1
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
