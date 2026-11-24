@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <oboe/Oboe.h>
+#include <SoundTouch.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -15,12 +16,14 @@ constexpr int N=4, ECHO_FRAMES=8192;
 constexpr uint64_t CAP=1u<<17, MASK=CAP-1, REC_CAP=1u<<19, REC_MASK=REC_CAP-1;
 struct Deck {
  std::array<float,CAP*2> pcm{};
- std::atomic<uint64_t> write{0},read{0},consumed{0};
+ std::atomic<uint64_t> write{0},read{0},sourceProgressQ16{0};
  std::atomic<bool> playing{false},echo{false};
  std::atomic<int> rate{48000};
  std::atomic<int64_t> startMs{0},durationMs{0};
  std::atomic<float> gain{0.82f},speed{1},lowGain{1},midGain{1},highGain{1};
  std::atomic<uint32_t> clearReq{0},clearAck{0};
+ std::mutex stretchMutex;
+ std::unique_ptr<soundtouch::SoundTouch> stretch;
  double phase=0;
  float lowL=0,lowR=0,midL=0,midR=0;
  std::array<float,ECHO_FRAMES*2> delay{};
@@ -43,27 +46,75 @@ public:
  void stop(){if(stream_){stream_->requestStop();stream_->close();stream_.reset();}}
  int sampleRate()const{return stream_?stream_->getSampleRate():48000;}
  int push(int d,JNIEnv*e,jfloatArray a,int off,int frames){
-  if(!valid(d)||!a||frames<=0)return 0; auto&x=decks_[d];
-  uint64_t w=x.write.load(std::memory_order_relaxed), rd=x.read.load(std::memory_order_acquire);
-  int n=(int)std::min<uint64_t>(CAP-(w-rd),(uint64_t)frames); if(n<=0)return 0;
-  std::vector<jfloat> tmp((size_t)n*2);e->GetFloatArrayRegion(a,off,n*2,tmp.data());
+  if(!valid(d)||!a||frames<=0)return 0;
+  auto&x=decks_[d];
+  std::vector<jfloat> input((size_t)frames*2);
+  e->GetFloatArrayRegion(a,off,frames*2,input.data());
   if(e->ExceptionCheck()){e->ExceptionClear();return 0;}
-  for(int i=0;i<n;i++){uint64_t p=((w+i)&MASK)*2;x.pcm[p]=tmp[i*2];x.pcm[p+1]=tmp[i*2+1];}
-  x.write.store(w+n,std::memory_order_release);return n;
+  std::lock_guard<std::mutex> guard(x.stretchMutex);
+  if(!x.stretch){
+   x.stretch=std::make_unique<soundtouch::SoundTouch>();
+   x.stretch->setSampleRate((uint)x.rate.load());
+   x.stretch->setChannels(2);
+   x.stretch->setTempo(x.speed.load());
+  }
+  x.stretch->putSamples(input.data(),(uint)frames);
+  drainStretch(x);
+  return frames;
  }
  void clear(int d){
-  if(!valid(d))return;auto&x=decks_[d];x.playing.store(false,std::memory_order_release);
+  if(!valid(d))return;
+  auto&x=decks_[d];
+  x.playing.store(false,std::memory_order_release);
+  {
+   std::lock_guard<std::mutex> guard(x.stretchMutex);
+   if(x.stretch)x.stretch->clear();
+  }
   uint32_t req=x.clearReq.fetch_add(1,std::memory_order_acq_rel)+1;
   if(!stream_||stream_->getState()!=oboe::StreamState::Started){applyClear(x,req);return;}
-  for(int i=0;i<2000;i++){if(x.clearAck.load(std::memory_order_acquire)==req)return;std::this_thread::yield();}
+  for(int i=0;i<80;i++){
+   if(x.clearAck.load(std::memory_order_acquire)==req)return;
+   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
   applyClear(x,req);
  }
- void info(int d,int rate,int64_t duration,int64_t start){if(!valid(d))return;auto&x=decks_[d];x.rate.store(std::max(8000,rate));x.durationMs.store(std::max<int64_t>(0,duration));x.startMs.store(std::max<int64_t>(0,start));x.consumed.store(0);}
- int64_t position(int d)const{if(!valid(d))return 0;auto&x=decks_[d];int r=std::max(1,x.rate.load());return x.startMs.load()+(int64_t)(x.consumed.load()*1000ULL/(uint64_t)r);}
+ void info(int d,int rate,int64_t duration,int64_t start){
+  if(!valid(d))return;
+  auto&x=decks_[d];
+  const int safeRate=std::max(8000,rate);
+  x.rate.store(safeRate);
+  x.durationMs.store(std::max<int64_t>(0,duration));
+  x.startMs.store(std::max<int64_t>(0,start));
+  x.sourceProgressQ16.store(0);
+  std::lock_guard<std::mutex> guard(x.stretchMutex);
+  if(!x.stretch)x.stretch=std::make_unique<soundtouch::SoundTouch>();
+  x.stretch->setSampleRate((uint)safeRate);
+  x.stretch->setChannels(2);
+  x.stretch->setTempo(x.speed.load());
+ }
+ int64_t position(int d)const{
+  if(!valid(d))return 0;
+  auto&x=decks_[d];
+  const uint64_t q16=x.sourceProgressQ16.load(std::memory_order_acquire);
+  const int r=std::max(1,x.rate.load());
+  return x.startMs.load()+(int64_t)(q16*1000ULL/((uint64_t)r*65536ULL));
+ }
  int buffered(int d)const{if(!valid(d))return 0;auto&x=decks_[d];return(int)std::min<uint64_t>(x.write.load()-x.read.load(),CAP);}
  void playing(int d,bool v){if(valid(d))decks_[d].playing.store(v);}
  void gain(int d,float v){if(valid(d))decks_[d].gain.store(std::clamp(v,0.f,1.5f));}
- void speed(int d,float v){if(valid(d))decks_[d].speed.store(std::clamp(v,.5f,2.f));}
+ void speed(int d,float v){
+  if(!valid(d))return;
+  auto&x=decks_[d];const float tempo=std::clamp(v,.5f,2.f);
+  x.speed.store(tempo,std::memory_order_release);
+  std::lock_guard<std::mutex> guard(x.stretchMutex);
+  if(x.stretch)x.stretch->setTempo(tempo);
+ }
+ void finish(int d){
+  if(!valid(d))return;
+  auto&x=decks_[d];
+  std::lock_guard<std::mutex> guard(x.stretchMutex);
+  if(x.stretch){x.stretch->flush();drainStretch(x);}
+ }
  void eq(int d,float l,float m,float h){if(valid(d)){decks_[d].lowGain.store(std::clamp(l,0.f,2.f));decks_[d].midGain.store(std::clamp(m,0.f,2.f));decks_[d].highGain.store(std::clamp(h,0.f,2.f));}}
  void echo(int d,bool v){if(valid(d))decks_[d].echo.store(v);}
  void master(float v){master_.store(std::clamp(v,0.f,1.f));}
@@ -96,11 +147,20 @@ public:
     int ep=x.delayPos*2;float el=x.delay[ep],er=x.delay[ep+1];x.delay[ep]=pl+el*.28f;x.delay[ep+1]=pr+er*.28f;x.delayPos=(x.delayPos+1)%ECHO_FRAMES;
     if(x.echo.load()){pl+=el*.35f;pr+=er*.35f;}
     float side=(d==0||d==2)?lCross:rCross,g=x.gain.load()*masterGain*side;ml+=pl*g;mr+=pr*g;
-    x.phase+=((double)x.rate.load()/outRate)*(double)x.speed.load();
+    x.phase+=((double)x.rate.load()/outRate);
    }
    out[fidx*2]=std::clamp(ml,-.98f,.98f);out[fidx*2+1]=std::clamp(mr,-.98f,.98f);
   }
-  for(int d=0;d<N;d++){auto&x=decks_[d];if(!x.playing.load())continue;uint64_t c=(uint64_t)x.phase;if(c){x.read.fetch_add(c);x.consumed.fetch_add(c);x.phase-=c;}}
+  for(int d=0;d<N;d++){
+   auto&x=decks_[d];if(!x.playing.load())continue;
+   uint64_t c=(uint64_t)x.phase;
+   if(c){
+    x.read.fetch_add(c,std::memory_order_release);
+    const double tempo=x.speed.load(std::memory_order_relaxed);
+    x.sourceProgressQ16.fetch_add((uint64_t)(c*tempo*65536.0),std::memory_order_release);
+    x.phase-=c;
+   }
+  }
   if(recording_.load()){
    uint64_t w=recWrite_.load(),r=recRead_.load(std::memory_order_acquire);int can=(int)std::min<uint64_t>(REC_CAP-(w-r),(uint64_t)nFrames);
    for(int i=0;i<can;i++){uint64_t p=((w+i)&REC_MASK)*2;record_[p]=out[i*2];record_[p+1]=out[i*2+1];}
@@ -110,7 +170,33 @@ public:
  }
 private:
  static bool valid(int d){return d>=0&&d<N;}
- static void applyClear(Deck&x,uint32_t req){x.read.store(x.write.load());x.phase=0;x.consumed.store(0);x.lowL=x.lowR=x.midL=x.midR=0;x.delay.fill(0);x.delayPos=0;x.clearAck.store(req,std::memory_order_release);}
+ static void enqueue(Deck&x,const float*samples,int frames){
+  int sent=0;
+  while(sent<frames){
+   uint64_t w=x.write.load(std::memory_order_relaxed),r=x.read.load(std::memory_order_acquire);
+   int n=(int)std::min<uint64_t>(CAP-(w-r),(uint64_t)(frames-sent));
+   if(n<=0){std::this_thread::sleep_for(std::chrono::milliseconds(1));continue;}
+   for(int i=0;i<n;i++){
+    uint64_t p=((w+i)&MASK)*2;
+    x.pcm[p]=samples[(sent+i)*2];x.pcm[p+1]=samples[(sent+i)*2+1];
+   }
+   x.write.store(w+n,std::memory_order_release);sent+=n;
+  }
+ }
+ static void drainStretch(Deck&x){
+  if(!x.stretch)return;
+  std::array<float,4096*2> temp{};
+  while(x.stretch->numSamples()>0){
+   uint got=x.stretch->receiveSamples(temp.data(),4096);
+   if(got==0)break;
+   enqueue(x,temp.data(),(int)got);
+  }
+ }
+ static void applyClear(Deck&x,uint32_t req){
+  x.read.store(x.write.load());x.phase=0;x.sourceProgressQ16.store(0);
+  x.lowL=x.lowR=x.midL=x.midR=0;x.delay.fill(0);x.delayPos=0;
+  x.clearAck.store(req,std::memory_order_release);
+ }
  std::array<Deck,N>decks_{};std::shared_ptr<oboe::AudioStream>stream_;
  std::atomic<float>master_{.9f},cross_{.5f};
  std::array<float,REC_CAP*2>record_{};std::atomic<uint64_t>recWrite_{0},recRead_{0};std::atomic<bool>recording_{false};
@@ -124,6 +210,7 @@ extern "C" JNIEXPORT void JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeS
 extern "C" JNIEXPORT jint JNICALL Java_com_djfulanipro_NativeAudioBridge_nativePushPcm(JNIEnv*e,jobject,jint d,jfloatArray a,jint o,jint n){std::lock_guard<std::mutex>l(mutex_);return get()->push(d,e,a,o,n);}
 extern "C" JNIEXPORT void JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeClearDeck(JNIEnv*,jobject,jint d){std::lock_guard<std::mutex>l(mutex_);get()->clear(d);}
 extern "C" JNIEXPORT void JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeSetDeckSourceInfo(JNIEnv*,jobject,jint d,jint r,jlong dur,jlong start){std::lock_guard<std::mutex>l(mutex_);get()->info(d,r,dur,start);}
+extern "C" JNIEXPORT void JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeFinishDeck(JNIEnv*,jobject,jint d){std::lock_guard<std::mutex>l(mutex_);get()->finish(d);}
 extern "C" JNIEXPORT jlong JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeGetDeckPositionMs(JNIEnv*,jobject,jint d){std::lock_guard<std::mutex>l(mutex_);return get()->position(d);}
 extern "C" JNIEXPORT jint JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeGetOutputSampleRate(JNIEnv*,jobject){std::lock_guard<std::mutex>l(mutex_);return get()->sampleRate();}
 extern "C" JNIEXPORT jint JNICALL Java_com_djfulanipro_NativeAudioBridge_nativeGetBufferedFrames(JNIEnv*,jobject,jint d){std::lock_guard<std::mutex>l(mutex_);return get()->buffered(d);}
