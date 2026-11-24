@@ -43,7 +43,7 @@ public:
  void stop(){if(stream_){stream_->requestStop();stream_->close();stream_.reset();}}
  int sampleRate()const{return stream_?stream_->getSampleRate():48000;}
  int push(int d,JNIEnv*e,jfloatArray a,int off,int frames){
-  if(!valid(d)||!a||frames<=0)return 0; auto&x=decks[d];
+  if(!valid(d)||!a||frames<=0)return 0; auto&x=decks_[d];
   uint64_t w=x.write.load(std::memory_order_relaxed), rd=x.read.load(std::memory_order_acquire);
   int n=(int)std::min<uint64_t>(CAP-(w-rd),(uint64_t)frames); if(n<=0)return 0;
   std::vector<jfloat> tmp((size_t)n*2);e->GetFloatArrayRegion(a,off,n*2,tmp.data());
@@ -52,20 +52,20 @@ public:
   x.write.store(w+n,std::memory_order_release);return n;
  }
  void clear(int d){
-  if(!valid(d))return;auto&x=decks[d];x.playing.store(false,std::memory_order_release);
+  if(!valid(d))return;auto&x=decks_[d];x.playing.store(false,std::memory_order_release);
   uint32_t req=x.clearReq.fetch_add(1,std::memory_order_acq_rel)+1;
   if(!stream_||stream_->getState()!=oboe::StreamState::Started){applyClear(x,req);return;}
   for(int i=0;i<2000;i++){if(x.clearAck.load(std::memory_order_acquire)==req)return;std::this_thread::yield();}
   applyClear(x,req);
  }
- void info(int d,int rate,int64_t duration,int64_t start){if(!valid(d))return;auto&x=decks[d];x.rate.store(std::max(8000,rate));x.durationMs.store(std::max<int64_t>(0,duration));x.startMs.store(std::max<int64_t>(0,start));x.consumed.store(0);}
- int64_t position(int d)const{if(!valid(d))return 0;auto&x=decks[d];int r=std::max(1,x.rate.load());return x.startMs.load()+(int64_t)(x.consumed.load()*1000ULL/(uint64_t)r);}
- int buffered(int d)const{if(!valid(d))return 0;auto&x=decks[d];return(int)std::min<uint64_t>(x.write.load()-x.read.load(),CAP);}
- void playing(int d,bool v){if(valid(d))decks[d].playing.store(v);}
- void gain(int d,float v){if(valid(d))decks[d].gain.store(std::clamp(v,0.f,1.5f));}
- void speed(int d,float v){if(valid(d))decks[d].speed.store(std::clamp(v,.5f,2.f));}
- void eq(int d,float l,float m,float h){if(valid(d)){decks[d].lowGain.store(std::clamp(l,0.f,2.f));decks[d].midGain.store(std::clamp(m,0.f,2.f));decks[d].highGain.store(std::clamp(h,0.f,2.f));}}
- void echo(int d,bool v){if(valid(d))decks[d].echo.store(v);}
+ void info(int d,int rate,int64_t duration,int64_t start){if(!valid(d))return;auto&x=decks_[d];x.rate.store(std::max(8000,rate));x.durationMs.store(std::max<int64_t>(0,duration));x.startMs.store(std::max<int64_t>(0,start));x.consumed.store(0);}
+ int64_t position(int d)const{if(!valid(d))return 0;auto&x=decks_[d];int r=std::max(1,x.rate.load());return x.startMs.load()+(int64_t)(x.consumed.load()*1000ULL/(uint64_t)r);}
+ int buffered(int d)const{if(!valid(d))return 0;auto&x=decks_[d];return(int)std::min<uint64_t>(x.write.load()-x.read.load(),CAP);}
+ void playing(int d,bool v){if(valid(d))decks_[d].playing.store(v);}
+ void gain(int d,float v){if(valid(d))decks_[d].gain.store(std::clamp(v,0.f,1.5f));}
+ void speed(int d,float v){if(valid(d))decks_[d].speed.store(std::clamp(v,.5f,2.f));}
+ void eq(int d,float l,float m,float h){if(valid(d)){decks_[d].lowGain.store(std::clamp(l,0.f,2.f));decks_[d].midGain.store(std::clamp(m,0.f,2.f));decks_[d].highGain.store(std::clamp(h,0.f,2.f));}}
+ void echo(int d,bool v){if(valid(d))decks_[d].echo.store(v);}
  void master(float v){master_.store(std::clamp(v,0.f,1.f));}
  void cross(float v){cross_.store(std::clamp(v,0.f,1.f));}
  void startRec(){recRead_.store(0);recWrite_.store(0);recording_.store(true);}
@@ -84,7 +84,7 @@ public:
   for(int fidx=0;fidx<nFrames;fidx++){
    float ml=0,mr=0;
    for(int d=0;d<N;d++){
-    auto&x=decks[d];uint32_t req=x.clearReq.load(std::memory_order_acquire);if(req!=x.clearAck.load())applyClear(x,req);
+    auto&x=decks_[d];uint32_t req=x.clearReq.load(std::memory_order_acquire);if(req!=x.clearAck.load())applyClear(x,req);
     if(!x.playing.load())continue;
     uint64_t rd=x.read.load(),w=x.write.load(std::memory_order_acquire),av=w-rd,off=(uint64_t)x.phase;
     if(av<=off+1)continue;
@@ -100,7 +100,7 @@ public:
    }
    out[fidx*2]=std::clamp(ml,-.98f,.98f);out[fidx*2+1]=std::clamp(mr,-.98f,.98f);
   }
-  for(int d=0;d<N;d++){auto&x=decks[d];if(!x.playing.load())continue;uint64_t c=(uint64_t)x.phase;if(c){x.read.fetch_add(c);x.consumed.fetch_add(c);x.phase-=c;}}
+  for(int d=0;d<N;d++){auto&x=decks_[d];if(!x.playing.load())continue;uint64_t c=(uint64_t)x.phase;if(c){x.read.fetch_add(c);x.consumed.fetch_add(c);x.phase-=c;}}
   if(recording_.load()){
    uint64_t w=recWrite_.load(),r=recRead_.load(std::memory_order_acquire);int can=(int)std::min<uint64_t>(REC_CAP-(w-r),(uint64_t)nFrames);
    for(int i=0;i<can;i++){uint64_t p=((w+i)&REC_MASK)*2;record_[p]=out[i*2];record_[p+1]=out[i*2+1];}
