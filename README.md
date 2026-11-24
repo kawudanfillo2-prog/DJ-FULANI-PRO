@@ -27,10 +27,13 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 ## Known limitations — not yet a complete professional DJ engine
 - AUTO BPM estimates tempo from a decoded audio preview and estimates an initial beat anchor. It is not yet a commercial-grade phrase-aware beat-grid/downbeat detector; verify and adjust the beat marker on complex, live, half-time or syncopated tracks.
 - Beat sync applies the master-to-target BPM ratio without double-applying the target pitch setting, and aligns the target's current beat phase while preserving its current musical section. It still uses independent Media3 player clocks and user-set beat markers, so it is not sample-accurate sync.
-- The four players use Android Media3 outputs. A single shared native audio mixer is still needed for sample-accurate mixing, advanced time-stretching, scratch response and a unified recording bus.
+- Audio decks now decode to PCM off the real-time thread and feed one shared Oboe output callback. SoundTouch 2.4.1 time-stretch is applied per deck so tempo matching can preserve musical pitch. The streams share one device output clock; hardware/device timing and beat-grid accuracy still require physical-device testing.
 - The waveform currently shows a decoded amplitude overview, not a continuously scrolling, multicolor, beat-quantized waveform display.
-- Jog-wheel touch scratching, echo/delay/flanger/filter DSP, sampler slicing, true master-bus recording, stem separation, headphone cue routing, advanced library management and the full multi-screen djay-style layout remain future milestones.
+- Master-output WAV recording and a separate Video DJ playback screen are now included. Jog-wheel touch scratching, more advanced echo/delay/flanger/filter DSP, sampler slicing, vocal/instrument stem separation, headphone cue routing, advanced library management and the full multi-screen djay-style layout remain future milestones.
 - Four simultaneous video decoders may exceed a phone's hardware decoder limits. Audio-only decks are recommended for performance on mid-range phones.
+
+## Tempo processing and licensing
+- SoundTouch 2.4.1 is used for independent tempo adjustment while preserving pitch. SoundTouch is licensed under LGPL-2.1; see `THIRD_PARTY_NOTICES.md` and the upstream source.
 
 ## Technology
 - Kotlin Android application

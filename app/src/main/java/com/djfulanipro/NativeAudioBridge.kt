@@ -8,6 +8,7 @@ internal object NativeAudioBridge {
     external fun nativeClearDeck(deck: Int)
     external fun nativeSetDeckSourceInfo(deck: Int, sampleRate: Int, durationMs: Long, startMs: Long)
     external fun nativeGetDeckPositionMs(deck: Int): Long
+    external fun nativeFinishDeck(deck: Int)
     external fun nativeGetOutputSampleRate(): Int
     external fun nativeGetBufferedFrames(deck: Int): Int
     external fun nativeSetDeckPlaying(deck: Int, playing: Boolean)

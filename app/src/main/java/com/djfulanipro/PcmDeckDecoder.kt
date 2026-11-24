@@ -102,7 +102,7 @@ internal class PcmDeckDecoder(
                     }
                 }
             }
-            if(running.get()&&outputDone)onFinished()
+            if(running.get()&&outputDone){NativeAudioBridge.nativeFinishDeck(deckIndex);onFinished()}
         }catch(e:Exception){if(running.get())onError(e.message?:"Audio decoder failed.")}
         finally{
             running.set(false)
