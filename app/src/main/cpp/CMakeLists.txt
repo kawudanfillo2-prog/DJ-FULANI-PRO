@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(djfulanipro_audio)
+add_library(djfulanipro_audio SHARED native_audio_engine.cpp)
+find_package(oboe REQUIRED CONFIG)
+target_compile_features(djfulanipro_audio PRIVATE cxx_std_20)
+target_link_libraries(djfulanipro_audio oboe android log)
