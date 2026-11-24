@@ -32,7 +32,7 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 - Master-output WAV recording and a separate Video DJ playback screen are now included. Jog-wheel touch scratching, more advanced echo/delay/flanger/filter DSP, sampler slicing, vocal/instrument stem separation, headphone cue routing, advanced library management and the full multi-screen djay-style layout remain future milestones.
 - Four simultaneous video decoders may exceed a phone's hardware decoder limits. Audio-only decks are recommended for performance on mid-range phones.
 
-## Tempo processing and licensing
+## Stem separation\n- Demucs v4.1.0 htdemucs_6s is an optional on-device six-stem engine. Its approximately 55 MB model is downloaded only when requested; it is not bundled inside the APK.\n- Outputs: drums, bass, other, vocals, guitar, piano and a combined Instrumental WAV without vocals. Files are copied to Music / DJ FULANI PRO / Separated.\n- Requires arm64-v8a and Android 10 / API 29 or newer. It uses one segment worker below 8 GB RAM and two at or above 8 GB. Processing is memory-intensive and performance depends on the phone.\n\n## Tempo processing and licensing
 - SoundTouch 2.4.1 is used for independent tempo adjustment while preserving pitch. SoundTouch is licensed under LGPL-2.1; see `THIRD_PARTY_NOTICES.md` and the upstream source.
 
 ## Technology
@@ -42,7 +42,7 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 - Planned next core engine: C++ with Google Oboe for shared low-latency mixing and DSP
 
 ## Build
-Open this repository in Android Studio with JDK 17 and Android SDK 35, sync Gradle, and build the `app` module. GitHub Actions also builds a debug APK on each push to `main`.
+Open this repository in Android Studio with JDK 17 and Android SDK 36, sync Gradle, and build the `app` module. GitHub Actions also builds a debug APK on each push to `main`.
 
 ## APK note
 APK size is not a quality target. The app should include only codecs, effects and assets it actually uses; adding unused files merely to make the APK 300 MB would make installation and updates slower without improving sound or mixing quality.
