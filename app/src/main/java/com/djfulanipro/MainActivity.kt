@@ -830,7 +830,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Set BPM — Deck ${'A' + index}")
-            .setMessage("Enter the track tempo. Automatic BPM analysis will be added in a later engine milestone.")
+            .setMessage("Enter or correct the tempo. Use AUTO BPM to estimate the original track tempo first.")
             .setView(field)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save") { _, _ ->
