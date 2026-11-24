@@ -54,6 +54,7 @@ class MainActivity : Activity() {
         val playButton: Button,
         val seek: SeekBar,
         val waveform: WaveformView,
+        val turntable: TurntableView,
         var mediaUri: Uri? = null,
         var analysisToken: Int = 0,
         var loaded: Boolean = false,
@@ -103,6 +104,7 @@ class MainActivity : Activity() {
                 if (player.duration > 0L) {
                     deck.waveform.setPlaybackPosition(player.currentPosition.toFloat() / player.duration)
                 }
+                deck.turntable.setPlaying(player.isPlaying)
                 if (deck.loopEnabled && player.isPlaying &&
                     player.currentPosition >= deck.loopEndMs) {
                     player.seekTo(deck.loopStartMs)
@@ -262,6 +264,12 @@ class MainActivity : Activity() {
         panel.addView(waveform, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, dp(58)
         ))
+        val turntable = TurntableView(this, accent).apply {
+            setBackgroundColor(Color.rgb(7, 12, 20))
+        }
+        panel.addView(turntable, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(126)
+        ))
 
         val videoView = PlayerView(this).apply {
             useController = false
@@ -374,6 +382,7 @@ class MainActivity : Activity() {
             playButton = play,
             seek = seek,
             waveform = waveform,
+            turntable = turntable,
             isMaster = index == 0
         )
         if (sessionId > 0) createDeckEffects(deck, sessionId)
