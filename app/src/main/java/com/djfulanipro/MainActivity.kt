@@ -206,6 +206,9 @@ class MainActivity : Activity() {
         header.addView(button("VIDEO DJ") {
             startActivity(Intent(this, VideoDjActivity::class.java))
         })
+        header.addView(button("STEMS") {
+            startActivity(Intent(this, StemSeparationActivity::class.java))
+        })
         header.addView(button("MENU") { showModeMenu() })
         root.addView(header)
 
@@ -386,7 +389,10 @@ class MainActivity : Activity() {
         panel.addView(label("VIDEO DJ", 11f, Color.rgb(42, 194, 255)))
         panel.addView(label("Video playback uses a separate screen and the phone's supported decoders.", 10f, Color.LTGRAY))
         panel.addView(label("STEM SEPARATION", 11f, Color.rgb(42, 194, 255)))
-        panel.addView(label("Vocal / instrumental separation requires an optional model download. It is not included yet; model and memory requirements will be checked before enabling it.", 10f, Color.LTGRAY))
+        panel.addView(label("Demucs v4.1.0 • 6 stems • 55 MB model downloaded on demand; substantial RAM is needed during separation.", 10f, Color.LTGRAY))
+        panel.addView(button("OPEN STEM SEPARATOR") {
+            startActivity(Intent(this, StemSeparationActivity::class.java))
+        })
         panel.addView(button("RESTART AUDIO ENGINE") {
             val ok = try { NativeAudioBridge.nativeStartEngine() } catch (_: Exception) { false }
             toast(if (ok) "Audio engine ready." else "Audio engine could not start.")
