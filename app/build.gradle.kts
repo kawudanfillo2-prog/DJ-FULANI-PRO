@@ -9,11 +9,11 @@ android {
     ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "com.djfulanipro"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        versionCode = 5
+        versionName = "0.5.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++20", "-O3")
