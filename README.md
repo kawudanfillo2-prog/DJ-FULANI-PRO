@@ -12,7 +12,9 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 - Video preview surface on each deck when a video file is loaded
 - Play, pause, stop, seek and per-deck volume
 - Master gain and equal-power crossfader
-- Manual BPM entry
+- Automatic BPM estimation from decoded PCM audio (AUTO BPM), plus manual BPM correction
+- Decoded audio-envelope waveform preview with playback-position line
+- Portrait mobile console layout with vinyl turntable visuals
 - Selectable tempo master
 - BPM ratio sync with approximate beat-phase alignment using user-set beat markers
 - Set beat-zero marker, cue return and four hot-cue positions per deck
@@ -23,11 +25,11 @@ This milestone replaces the first MediaPlayer-based four-deck screen with Androi
 - Eight performance sampler pads with audio sample loading
 
 ## Known limitations — not yet a complete professional DJ engine
-- BPM is entered manually; automatic BPM and downbeat analysis are not implemented yet.
+- AUTO BPM estimates tempo from a decoded audio preview and estimates an initial beat anchor. It is not yet a commercial-grade phrase-aware beat-grid/downbeat detector; verify and adjust the beat marker on complex, live, half-time or syncopated tracks.
 - Beat sync is BPM-ratio and beat-phase alignment from user-set beat markers. It is not sample-accurate sync.
 - The four players use Android Media3 outputs. A single shared native audio mixer is still needed for sample-accurate mixing, advanced time-stretching, scratch response and a unified recording bus.
-- Live waveform rendering and waveform analysis are not implemented yet.
-- Jog-wheel vinyl scratching, echo/delay/flanger/filter DSP, sampler slicing, recording, stem separation, headphone cue routing and playlist/library management are future milestones.
+- The waveform currently shows a decoded amplitude overview, not a continuously scrolling, multicolor, beat-quantized waveform display.
+- Jog-wheel touch scratching, echo/delay/flanger/filter DSP, sampler slicing, true master-bus recording, stem separation, headphone cue routing, advanced library management and the full multi-screen djay-style layout remain future milestones.
 - Four simultaneous video decoders may exceed a phone's hardware decoder limits. Audio-only decks are recommended for performance on mid-range phones.
 
 ## Technology
