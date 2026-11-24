@@ -57,6 +57,7 @@ class MainActivity : Activity() {
         val seek: SeekBar,
         val waveform: WaveformView,
         val turntable: TurntableView,
+        var waveformData: FloatArray = FloatArray(160) { 0f },
         var mediaUri: Uri? = null,
         var audioMode: Boolean = false,
         var decoder: PcmDeckDecoder? = null,
@@ -298,7 +299,6 @@ class MainActivity : Activity() {
                     })
                 }
                 host.addView(row)
-                host.addView(createMasterStrip())
             }
             "SAMPLER" -> host.addView(createSamplerSection())
             "CUE" -> host.addView(createCuePage())
@@ -338,7 +338,7 @@ class MainActivity : Activity() {
                 val duration = if (deck.audioMode) deck.durationMs else deck.player.duration
                 val pos = currentPositionMs(index)
                 val frac = if (duration > 0L) pos.toFloat() / duration else 0f
-                wave.setDeckData(index, FloatArray(160) { 0.05f }, frac, deck.title.text.toString())
+                wave.setDeckData(index, deck.waveformData, frac, deck.title.text.toString())
             }
         }
         return panel
@@ -413,10 +413,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        controls.addView(button("SYNC A") {
-            if (decks[0].isMaster) toast("Deck A is currently the tempo master.")
-            else syncDeck(0)
-        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("MASTER A") { setMasterDeck(0) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
         controls.addView(button("BPM A") { editBpm(0) },
             LinearLayout.LayoutParams(0, dp(38), 1f))
         controls.addView(button("PLAY A") { toggleDeck(0) },
@@ -1094,6 +1092,7 @@ class MainActivity : Activity() {
                     current.bpm = result.bpm
                     current.beatZeroMs = result.beatZeroMs
                     current.bpmButton.text = "BPM %.1f".format(result.bpm)
+                    current.waveformData = result.waveform.copyOf()
                     current.waveform.setWaveform(result.waveform)
                     dualWaveformView?.setDeckData(index, result.waveform,
                         currentPositionMs(index).toFloat() / current.durationMs.coerceAtLeast(1L),
