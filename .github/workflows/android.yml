@@ -1,4 +1,8 @@
 name: Build DJ FULANI PRO APK
+concurrency:
+  group: dj-fulani-pro-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
