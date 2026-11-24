@@ -10,7 +10,7 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     soundtouch
     GIT_REPOSITORY https://github.com/rtiangha/soundtouch.git
-    GIT_TAG master
+    GIT_TAG f738b1132ec1fd56efc90367898244cf52d9e6a5
     GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
 )
