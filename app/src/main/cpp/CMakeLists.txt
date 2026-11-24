@@ -30,3 +30,12 @@ target_link_libraries(djfulani_audio
     android
     log
 )
+
+# Demucs v4.1.0 six-stem source separation. Source and Eigen are fetched
+# recursively by the GitHub Actions build workflow.
+set(SDENGINE_JNI ON CACHE BOOL "" FORCE)
+set(SDENGINE_JNI_CLASS "com/djfulanipro/NativeStemEngine" CACHE STRING "" FORCE)
+add_subdirectory(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/demucs-android"
+    "${CMAKE_BINARY_DIR}/demucs-android"
+)
