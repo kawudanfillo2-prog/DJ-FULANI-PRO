@@ -255,7 +255,7 @@ class MainActivity : Activity() {
             useController = false
             controllerAutoShow = false
             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-            player = player
+            this.player = player
             setShutterBackgroundColor(Color.BLACK)
             visibility = View.GONE
         }
@@ -275,6 +275,8 @@ class MainActivity : Activity() {
         val play = button("PLAY") { toggleDeck(index) }
         controls.addView(play, LinearLayout.LayoutParams(0, dp(35), 1f))
         controls.addView(button("CUE") { returnToCue(index) },
+            LinearLayout.LayoutParams(0, dp(35), 1f))
+        controls.addView(button("SET CUE") { setCue(index) },
             LinearLayout.LayoutParams(0, dp(35), 1f))
         controls.addView(button("SET BEAT") { setBeatZero(index) },
             LinearLayout.LayoutParams(0, dp(35), 1f))
@@ -684,6 +686,17 @@ class MainActivity : Activity() {
         deck.status.text = "STOPPED"
     }
 
+    private fun setCue(index: Int) {
+        val deck = decks[index]
+        if (!deck.loaded) {
+            toast("Load a track before setting a cue point.")
+            return
+        }
+        deck.cueMs = deck.player.currentPosition
+        deck.status.text = "CUE MARKED"
+        toast("Cue point saved on Deck ${'A' + index}.")
+    }
+
     private fun setBeatZero(index: Int) {
         val deck = decks[index]
         if (!deck.loaded) {
@@ -897,15 +910,6 @@ class MainActivity : Activity() {
             toast("Reload this sampler pad and try again.")
         }
     }
-
-    private fun simpleSeek(onValue: (Int) -> Unit) =
-        object : SeekBar.OnSeekBarChangeListener {
-            override fun onStartTrackingTouch(bar: SeekBar?) { }
-            override fun onStopTrackingTouch(bar: SeekBar?) { }
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) onValue(progress)
-            }
-        }
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
