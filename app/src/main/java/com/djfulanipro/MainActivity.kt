@@ -53,6 +53,9 @@ class MainActivity : Activity() {
         val masterButton: Button,
         val playButton: Button,
         val seek: SeekBar,
+        val waveform: WaveformView,
+        var mediaUri: Uri? = null,
+        var analysisToken: Int = 0,
         var loaded: Boolean = false,
         var dragging: Boolean = false,
         var gain: Float = 0.82f,
@@ -96,6 +99,9 @@ class MainActivity : Activity() {
                     deck.seek.max = player.duration.toInt().coerceAtLeast(1)
                     deck.seek.progress = player.currentPosition.toInt()
                         .coerceIn(0, deck.seek.max)
+                }
+                if (player.duration > 0L) {
+                    deck.waveform.setPlaybackPosition(player.currentPosition.toFloat() / player.duration)
                 }
                 if (deck.loopEnabled && player.isPlaying &&
                     player.currentPosition >= deck.loopEndMs) {
@@ -250,6 +256,12 @@ class MainActivity : Activity() {
         panel.addView(title)
         val status = label("READY • AUDIO / VIDEO", 9f, accent)
         panel.addView(status)
+        val waveform = WaveformView(this).apply {
+            setBackgroundColor(Color.rgb(7, 12, 20))
+        }
+        panel.addView(waveform, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(58)
+        ))
 
         val videoView = PlayerView(this).apply {
             useController = false
@@ -288,8 +300,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        secondRow.addView(button("AUTO BPM") { analyzeBpm(index) },
+            LinearLayout.LayoutParams(0, dp(33), 1.15f))
         secondRow.addView(button("STOP") { stopDeck(index) },
-            LinearLayout.LayoutParams(0, dp(33), 1f))
+            LinearLayout.LayoutParams(0, dp(33), 0.8f))
         secondRow.addView(button("4 BEAT LOOP") { toggleLoop(index) },
             LinearLayout.LayoutParams(0, dp(33), 1.3f))
         secondRow.addView(button("LOOP OFF") { deckLoopOff(index) },
@@ -359,6 +373,7 @@ class MainActivity : Activity() {
             masterButton = masterButton,
             playButton = play,
             seek = seek,
+            waveform = waveform,
             isMaster = index == 0
         )
         if (sessionId > 0) createDeckEffects(deck, sessionId)
@@ -638,6 +653,8 @@ class MainActivity : Activity() {
 
     private fun loadTrack(index: Int, uri: Uri) {
         val deck = decks[index]
+        deck.analysisToken++
+        deck.mediaUri = uri
         deck.player.stop()
         deck.player.clearMediaItems()
         deck.loaded = false
@@ -658,6 +675,36 @@ class MainActivity : Activity() {
         deck.player.setMediaItem(MediaItem.fromUri(uri))
         deck.player.prepare()
         deck.player.playWhenReady = false
+        analyzeBpm(index)
+    }
+
+    private fun analyzeBpm(index: Int) {
+        val deck = decks.getOrNull(index) ?: return
+        val uri = deck.mediaUri ?: run {
+            toast("Load a track before automatic BPM analysis.")
+            return
+        }
+        val token = ++deck.analysisToken
+        deck.status.text = "ANALYZING TEMPO…"
+        Thread {
+            val result = BpmAnalyzer.analyze(this, uri)
+            runOnUiThread {
+                if (isFinishing || index !in decks.indices || decks[index].analysisToken != token) return@runOnUiThread
+                val current = decks[index]
+                if (result == null) {
+                    current.status.text = "BPM ANALYSIS FAILED • SET MANUALLY"
+                    toast("Could not detect a reliable tempo. Try another section or enter BPM manually.")
+                } else {
+                    current.bpm = result.bpm
+                    current.beatZeroMs = result.beatZeroMs
+                    current.bpmButton.text = "BPM %.1f".format(result.bpm)
+                    current.waveform.setWaveform(result.waveform)
+                    current.status.text = "AUTO BPM %.1f • BEAT GRID ESTIMATE".format(result.bpm)
+                    applyAllDeckSpeeds()
+                    toast("Detected %.1f BPM on Deck %s".format(result.bpm, 'A' + index))
+                }
+            }
+        }.start()
     }
 
     private fun toggleDeck(index: Int) {
