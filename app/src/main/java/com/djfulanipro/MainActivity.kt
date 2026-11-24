@@ -7,6 +7,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.database.Cursor
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.audiofx.BassBoost
@@ -24,6 +25,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
@@ -98,6 +100,11 @@ class MainActivity : Activity() {
     private var crossfader = 0.5f
     private var pendingDeck = -1
     private var mixRecorder: MixRecorder? = null
+    private val deckViews = ArrayList<View>(4)
+    private var pageHost: LinearLayout? = null
+    private var recordButton: Button? = null
+    private var dualWaveformView: DualWaveformView? = null
+    private var activePage = "CLASSIC"
 
     private val progressTask = object : Runnable {
         override fun run() {
@@ -110,8 +117,21 @@ class MainActivity : Activity() {
                     deck.seek.max = duration.coerceAtMost(Int.MAX_VALUE.toLong()).toInt().coerceAtLeast(1)
                     deck.seek.progress = position.coerceIn(0L, deck.seek.max.toLong()).toInt()
                 }
-                if (duration > 0L) deck.waveform.setPlaybackPosition(position.toFloat() / duration)
+                val fraction = if (duration > 0L) position.toFloat() / duration else 0f
+                deck.waveform.setPlaybackPosition(fraction)
                 deck.turntable.setPlaying(playing)
+                if (index < 2) {
+                    dualWaveformView?.setPositions(
+                        decks.getOrNull(0)?.let { d ->
+                            val dur = if (d.audioMode) d.durationMs else d.player.duration
+                            if (dur > 0L) currentPositionMs(0).toFloat() / dur else 0f
+                        } ?: 0f,
+                        decks.getOrNull(1)?.let { d ->
+                            val dur = if (d.audioMode) d.durationMs else d.player.duration
+                            if (dur > 0L) currentPositionMs(1).toFloat() / dur else 0f
+                        } ?: 0f
+                    )
+                }
                 if (deck.loopEnabled && playing && position >= deck.loopEndMs) {
                     if (deck.audioMode) seekAudioDeck(index, deck.loopStartMs, true)
                     else deck.player.seekTo(deck.loopStartMs)
@@ -150,14 +170,21 @@ class MainActivity : Activity() {
             textSize = 10f
             minHeight = dp(34)
             setPadding(dp(5), 0, dp(5), 0)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(20, 31, 47))
+                cornerRadius = dp(9).toFloat()
+                setStroke(dp(1), Color.rgb(39, 157, 219))
+            }
             setOnClickListener { action() }
         }
 
     private fun buildConsole() {
+        deckViews.clear()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(9), dp(6), dp(9), dp(9))
-            setBackgroundColor(Color.rgb(6, 10, 17))
+            setPadding(dp(7), dp(5), dp(7), dp(5))
+            setBackgroundColor(Color.rgb(5, 9, 16))
         }
 
         val header = LinearLayout(this).apply {
@@ -167,51 +194,241 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply {
             setImageResource(R.drawable.ic_dj_fulani_mark)
             scaleType = ImageView.ScaleType.FIT_CENTER
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        header.addView(label("DJ FULANI PRO", 22f, Color.WHITE),
-            LinearLayout.LayoutParams(0, dp(44), 1f))
+        }, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(label("DJ FULANI PRO", 20f, Color.WHITE))
+            addView(label("PROFESSIONAL DJ WORKSTATION", 8f, Color.rgb(45, 200, 255)))
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
         header.addView(button("VIDEO DJ") {
             startActivity(Intent(this, VideoDjActivity::class.java))
         })
+        header.addView(button("MENU") { showModeMenu() })
         root.addView(header)
 
-        val subHeader = label(
-            "LOAD MUSIC OR VIDEO • SET BPM • MARK THE FIRST BEAT • SYNC",
-            9f, Color.rgb(170, 190, 210)
-        )
-        root.addView(subHeader)
-
-        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        for (row in 0..1) {
-            val rowLayout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.TOP
-            }
-            for (column in 0..1) {
-                val index = row * 2 + column
-                rowLayout.addView(
-                    createDeck(index),
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                        .apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
-                )
-            }
-            grid.addView(rowLayout)
+        val tabsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
         }
-        root.addView(grid)
-        root.addView(createMasterStrip())
-        root.addView(createSamplerSection())
-        root.addView(label(
-            "SYNC uses the BPM values you enter and the beat markers you set. " +
-                "Video decoding depends on your phone's supported formats.",
-            9f, Color.LTGRAY
-        ).apply { setPadding(dp(4), dp(8), dp(4), dp(5)) })
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        listOf("CLASSIC", "4 DECK", "WAVEFORM", "MIXER", "SAMPLER", "CUE", "SETTINGS").forEach { page ->
+            tabs.addView(button(page) { showPage(page) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(38))
+                    .apply { setMargins(dp(2), 0, dp(2), 0) })
+        }
+        tabsScroll.addView(tabs)
+        root.addView(tabsScroll)
 
-        val scroll = ScrollView(this).apply {
+        pageHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(2), dp(2), dp(3))
+        }
+        val pageScroll = ScrollView(this).apply {
             isFillViewport = true
-            addView(root)
-            setBackgroundColor(Color.rgb(6, 10, 17))
+            addView(pageHost)
+            setBackgroundColor(Color.rgb(5, 9, 16))
         }
-        setContentView(scroll)
+        root.addView(pageScroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        for (index in 0..3) deckViews.add(createDeck(index))
+        root.addView(createTransportStrip())
+        root.addView(createMasterStrip())
+        setContentView(root)
+        showPage(activePage)
+    }
+
+    private fun showModeMenu() {
+        val choices = arrayOf("STARTER", "CLASSIC", "4-DECK PRO", "AUTOMIX 🔒", "SETTINGS")
+        AlertDialog.Builder(this)
+            .setTitle("DJ FULANI PRO")
+            .setItems(choices) { _, which ->
+                when (which) {
+                    0 -> showPage("CLASSIC")
+                    1 -> showPage("CLASSIC")
+                    2 -> showPage("4 DECK")
+                    3 -> toast("AUTOMIX is reserved for a later PRO milestone.")
+                    4 -> showPage("SETTINGS")
+                }
+            }
+            .show()
+    }
+
+    private fun showPage(page: String) {
+        activePage = page
+        val host = pageHost ?: return
+        host.removeAllViews()
+        when (page) {
+            "CLASSIC" -> {
+                host.addView(label("CLASSIC • TWO-DECK PERFORMANCE", 11f, Color.rgb(42, 194, 255)))
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                for (index in 0..1) {
+                    row.addView(deckViews[index], LinearLayout.LayoutParams(0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(dp(2), dp(3), dp(2), dp(3))
+                    })
+                }
+                host.addView(row)
+            }
+            "4 DECK" -> {
+                host.addView(label("FOUR-DECK PERFORMANCE MODE", 11f, Color.rgb(42, 194, 255)))
+                for (rowIndex in 0..1) {
+                    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                    for (column in 0..1) {
+                        val index = rowIndex * 2 + column
+                        row.addView(deckViews[index], LinearLayout.LayoutParams(0,
+                            LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            setMargins(dp(2), dp(3), dp(2), dp(3))
+                        })
+                    }
+                    host.addView(row)
+                }
+            }
+            "WAVEFORM" -> host.addView(createDualWaveformPage())
+            "MIXER" -> {
+                host.addView(label("MIXER • EQ / FILTER / MASTER", 11f, Color.rgb(42, 194, 255)))
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                for (index in 0..1) {
+                    row.addView(deckViews[index], LinearLayout.LayoutParams(0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(dp(2), dp(3), dp(2), dp(3))
+                    })
+                }
+                host.addView(row)
+                host.addView(createMasterStrip())
+            }
+            "SAMPLER" -> host.addView(createSamplerSection())
+            "CUE" -> host.addView(createCuePage())
+            "SETTINGS" -> host.addView(createSettingsPage())
+            else -> host.addView(label("Choose a DJ mode.", 14f))
+        }
+    }
+
+    private fun createDualWaveformPage(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(8, 13, 22))
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+        }
+        panel.addView(label("DUAL WAVEFORM • DECK A / DECK B", 12f,
+            Color.rgb(42, 194, 255)))
+        val wave = DualWaveformView(this)
+        dualWaveformView = wave
+        val waveHeight = (resources.displayMetrics.heightPixels * 0.43f).toInt().coerceAtLeast(dp(250))
+        panel.addView(wave, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, waveHeight
+        ))
+        for (index in 0..1) {
+            val deck = decks.getOrNull(index)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(label("DECK ${'A' + index}", 10f,
+                if (index == 0) Color.rgb(0, 190, 255) else Color.rgb(255, 75, 110)),
+                LinearLayout.LayoutParams(0, dp(40), 1f))
+            row.addView(button("LOAD") { openDeckPicker(index) })
+            row.addView(button("PLAY / PAUSE") { toggleDeck(index) })
+            row.addView(button("AUTO BPM") { analyzeBpm(index) })
+            panel.addView(row)
+            if (deck != null) {
+                val duration = if (deck.audioMode) deck.durationMs else deck.player.duration
+                val pos = currentPositionMs(index)
+                val frac = if (duration > 0L) pos.toFloat() / duration else 0f
+                wave.setDeckData(index, FloatArray(160) { 0.05f }, frac, deck.title.text.toString())
+            }
+        }
+        return panel
+    }
+
+    private fun createCuePage(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setBackgroundColor(Color.rgb(15, 24, 38))
+        }
+        panel.addView(label("PERFORMANCE CUES • HOT CUE / SLICE READY", 12f,
+            Color.rgb(42, 194, 255)))
+        for (deckIndex in 0..1) {
+            panel.addView(label("DECK ${'A' + deckIndex}", 10f, Color.LTGRAY))
+            val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (cue in 0..3) {
+                row1.addView(button("HOT CUE ${cue + 1}") { useHotCue(deckIndex, cue) },
+                    LinearLayout.LayoutParams(0, dp(58), 1f).apply {
+                        setMargins(dp(3), dp(3), dp(3), dp(3))
+                    })
+            }
+            panel.addView(row1)
+            panel.addView(button("SET BEAT / DOWNBEAT") { setBeatZero(deckIndex) })
+        }
+        panel.addView(label("SLICE mode is not implemented yet; these pads are real hot-cue points.", 9f, Color.LTGRAY))
+        return panel
+    }
+
+    private fun createSettingsPage(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(Color.rgb(15, 24, 38))
+        }
+        panel.addView(label("DJ FULANI PRO • SETTINGS", 16f, Color.WHITE))
+        panel.addView(label("AUDIO ENGINE", 11f, Color.rgb(42, 194, 255)))
+        panel.addView(label("Shared Oboe output • stereo • low-latency mode with device fallback", 10f, Color.LTGRAY))
+        panel.addView(label("TEMPO ENGINE", 11f, Color.rgb(42, 194, 255)))
+        panel.addView(label("SoundTouch time-stretch • tempo changes preserve pitch", 10f, Color.LTGRAY))
+        panel.addView(label("RECORDING", 11f, Color.rgb(42, 194, 255)))
+        panel.addView(label("Master-output WAV recording is available from the REC button.", 10f, Color.LTGRAY))
+        panel.addView(label("VIDEO DJ", 11f, Color.rgb(42, 194, 255)))
+        panel.addView(label("Video playback uses a separate screen and the phone's supported decoders.", 10f, Color.LTGRAY))
+        panel.addView(label("STEM SEPARATION", 11f, Color.rgb(42, 194, 255)))
+        panel.addView(label("Vocal / instrumental separation requires an optional model download. It is not included yet; model and memory requirements will be checked before enabling it.", 10f, Color.LTGRAY))
+        panel.addView(button("RESTART AUDIO ENGINE") {
+            val ok = try { NativeAudioBridge.nativeStartEngine() } catch (_: Exception) { false }
+            toast(if (ok) "Audio engine ready." else "Audio engine could not start.")
+        })
+        return panel
+    }
+
+    private fun createTransportStrip(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(5), dp(4), dp(5), dp(4))
+            setBackgroundColor(Color.rgb(22, 28, 39))
+        }
+        val title = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        title.addView(button("1") { showPage("CLASSIC") })
+        title.addView(label("MIX", 13f, Color.rgb(48, 160, 255)).apply {
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(0, dp(34), 1f))
+        title.addView(button("2") { showPage("CLASSIC") })
+        panel.addView(title)
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        controls.addView(button("SYNC A") {
+            if (decks[0].isMaster) toast("Deck A is currently the tempo master.")
+            else syncDeck(0)
+        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("BPM A") { editBpm(0) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("PLAY A") { toggleDeck(0) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("SYNC B") { syncDeck(1) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("BPM B") { editBpm(1) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
+        controls.addView(button("PLAY B") { toggleDeck(1) },
+            LinearLayout.LayoutParams(0, dp(38), 1f))
+        panel.addView(controls)
+        return panel
     }
 
     private fun createDeck(index: Int): View {
@@ -601,9 +818,10 @@ class MainActivity : Activity() {
         cross.addView(crossBar, LinearLayout.LayoutParams(0, dp(28), 1f))
         strip.addView(cross, LinearLayout.LayoutParams(0,
             LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        strip.addView(button(if (mixRecorder == null) "REC" else "STOP REC") {
+        recordButton = button(if (mixRecorder == null) "REC" else "STOP REC") {
             toggleRecording()
-        }, LinearLayout.LayoutParams(dp(88), dp(42)))
+        }
+        strip.addView(recordButton, LinearLayout.LayoutParams(dp(88), dp(42)))
         return strip
     }
 
@@ -611,8 +829,8 @@ class MainActivity : Activity() {
         if (mixRecorder != null) {
             mixRecorder?.stop()
             mixRecorder = null
+            recordButton?.text = "REC"
             toast("Recording stopped. WAV mix saved.")
-            rebuildConsole()
             return
         }
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -624,7 +842,7 @@ class MainActivity : Activity() {
     }
 
     private fun rebuildConsole() {
-        buildConsole()
+        recordButton?.text = if (mixRecorder == null) "REC" else "STOP REC"
     }
 
     private fun createSamplerSection(): View {
@@ -698,22 +916,22 @@ class MainActivity : Activity() {
                 onStopped = { bytes ->
                     runOnUiThread {
                         mixRecorder = null
+                        recordButton?.text = "REC"
                         toast("WAV mix saved • ${bytes / 1024} KB")
-                        rebuildConsole()
                     }
                 },
                 onError = { message ->
                     runOnUiThread {
                         mixRecorder = null
+                        recordButton?.text = "REC"
                         toast("Recording error: $message")
-                        rebuildConsole()
                     }
                 }
             )
             if (recorder.start()) {
                 mixRecorder = recorder
+                recordButton?.text = "STOP REC"
                 toast("MASTER RECORDING STARTED")
-                rebuildConsole()
             }
             return
         }
@@ -877,6 +1095,9 @@ class MainActivity : Activity() {
                     current.beatZeroMs = result.beatZeroMs
                     current.bpmButton.text = "BPM %.1f".format(result.bpm)
                     current.waveform.setWaveform(result.waveform)
+                    dualWaveformView?.setDeckData(index, result.waveform,
+                        currentPositionMs(index).toFloat() / current.durationMs.coerceAtLeast(1L),
+                        current.title.text.toString())
                     current.status.text = "AUTO BPM %.1f • BEAT GRID ESTIMATE".format(result.bpm)
                     applyAllDeckSpeeds()
                     toast("Detected %.1f BPM on Deck %s".format(result.bpm, 'A' + index))
