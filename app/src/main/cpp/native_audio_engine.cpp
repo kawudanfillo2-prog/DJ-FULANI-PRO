@@ -82,7 +82,11 @@ public:
    if(x.stretch)x.stretch->clear();
   }
   uint32_t req=x.clearReq.fetch_add(1,std::memory_order_acq_rel)+1;
-  if(!stream_||stream_->getState()!=oboe::StreamState::Started){applyClear(x,req);return;}
+  if(!stream_||stream_->getState()!=oboe::StreamState::Started){
+   applyClear(x,req);
+   x.clearing.store(false,std::memory_order_release);
+   return;
+  }
   for(int i=0;i<80;i++){
    if(x.clearAck.load(std::memory_order_acquire)==req)return;
    std::this_thread::sleep_for(std::chrono::milliseconds(1));
